@@ -1,0 +1,47 @@
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using OpcBridge.App;
+using OpcBridge.Core;
+using OpcBridge.Da;
+using OpcBridge.Ua;
+
+WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+
+builder.WebHost.UseUrls("http://0.0.0.0:8080");
+builder.Configuration.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
+
+builder.Services.Configure<BridgeOptions>(builder.Configuration.GetSection("Bridge"));
+builder.Services.Configure<DaClientOptions>(builder.Configuration.GetSection("Da"));
+builder.Services.Configure<UaServerOptions>(builder.Configuration.GetSection("Ua"));
+
+builder.Services.AddSingleton<DaRuntimeSettings>();
+builder.Services.AddSingleton<DaClientFactory>();
+builder.Services.AddSingleton<BridgeState>();
+builder.Services.AddSingleton<UaServerHost>();
+builder.Services.AddHostedService<BridgeWorker>();
+
+WebApplication app = builder.Build();
+
+app.MapGet("/", () => Results.Content(DashboardPage.Html, "text/html"));
+app.MapGet("/api/values", (BridgeState state) => Results.Json(new { values = state.GetValues() }));
+app.MapGet("/api/status", (BridgeState state, UaServerHost uaServer) => Results.Json(new
+{
+    bridge = state.GetStatus(),
+    ua = uaServer.GetStatus()
+}));
+app.MapGet("/api/dashboard", (BridgeState state, UaServerHost uaServer) => Results.Json(new
+{
+    bridge = state.GetStatus(),
+    ua = uaServer.GetStatus(),
+    values = state.GetValues()
+}));
+app.MapPost("/api/da/mode", (ModeChangeRequest request, DaRuntimeSettings settings) =>
+{
+    DaRuntimeSettingsSnapshot snapshot = settings.SetMode(request.Mode);
+    return Results.Json(new { mode = snapshot.Mode, version = snapshot.Version });
+});
+app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+
+await app.RunAsync().ConfigureAwait(false);

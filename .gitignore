@@ -1,0 +1,30 @@
+# Build results
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+
+# .NET user secrets and local config
+appsettings.*.json
+!appsettings.json
+
+# Visual Studio / Rider
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.rsuser
+
+# JetBrains Rider
+.idea/
+*.DotSettings.user
+
+# PKI artifacts — keep directory structure, not secrets
+pki/own/private/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
