@@ -42,6 +42,35 @@ app.MapPost("/api/da/mode", (ModeChangeRequest request, DaRuntimeSettings settin
     DaRuntimeSettingsSnapshot snapshot = settings.SetMode(request.Mode);
     return Results.Json(new { mode = snapshot.Mode, version = snapshot.Version });
 });
+app.MapGet("/api/da/config", (DaRuntimeSettings settings) =>
+{
+    DaRuntimeSettingsSnapshot snapshot = settings.GetSnapshot();
+    return Results.Json(new { progId = snapshot.ProgId, host = snapshot.Host });
+});
+app.MapPost("/api/da/config", (DaServerConfigRequest request, DaRuntimeSettings settings) =>
+{
+    DaRuntimeSettingsSnapshot snapshot = settings.SetServerConfig(request.ProgId, request.Host);
+    return Results.Json(new { progId = snapshot.ProgId, host = snapshot.Host, version = snapshot.Version });
+});
+app.MapGet("/api/da/servers", async (string? host) =>
+{
+    if (!OperatingSystem.IsWindows())
+        return Results.Json(new { error = "OPC DA enumeration requires Windows.", servers = Array.Empty<object>() });
+    try
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var servers = await Task.Run(() => OpcBridge.Da.OpcServerEnumerator.Enumerate(host), cts.Token);
+        return Results.Json(new { servers });
+    }
+    catch (OperationCanceledException)
+    {
+        return Results.Json(new { error = "Enumeration timed out. Check OpcEnum service and DCOM settings.", servers = Array.Empty<object>() });
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { error = ex.Message, servers = Array.Empty<object>() });
+    }
+});
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
 await app.RunAsync().ConfigureAwait(false);

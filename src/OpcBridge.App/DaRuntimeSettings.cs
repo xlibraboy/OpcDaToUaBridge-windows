@@ -47,6 +47,24 @@ public sealed class DaRuntimeSettings
         }
     }
 
+    public DaRuntimeSettingsSnapshot SetServerConfig(string progId, string host)
+    {
+        string trimmedProgId = progId?.Trim() ?? string.Empty;
+        string trimmedHost = host?.Trim() ?? "localhost";
+
+        lock (sync_)
+        {
+            snapshot_ = snapshot_ with
+            {
+                ProgId = trimmedProgId,
+                Host = trimmedHost,
+                Version = snapshot_.Version + 1
+            };
+
+            return snapshot_;
+        }
+    }
+
     private static string NormalizeMode(string? mode)
     {
         string value = mode?.Trim() ?? string.Empty;
