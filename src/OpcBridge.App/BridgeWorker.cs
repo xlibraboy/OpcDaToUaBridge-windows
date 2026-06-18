@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using OpcBridge.Core;
 using OpcBridge.Da;
 using OpcBridge.Ua;
@@ -11,7 +10,7 @@ public sealed class BridgeWorker : BackgroundService
 {
     private readonly UaServerHost ua_server_;
     private readonly BridgeState bridge_state_;
-    private readonly BridgeOptions bridge_options_;
+    private readonly MappingStore mapping_store_;
     private readonly DaRuntimeSettings da_settings_;
     private readonly DaClientFactory da_client_factory_;
     private readonly ILogger<BridgeWorker> logger_;
@@ -19,14 +18,14 @@ public sealed class BridgeWorker : BackgroundService
     public BridgeWorker(
         UaServerHost uaServer,
         BridgeState bridgeState,
-        IOptions<BridgeOptions> bridgeOptions,
+        MappingStore mappingStore,
         DaRuntimeSettings daSettings,
         DaClientFactory daClientFactory,
         ILogger<BridgeWorker> logger)
     {
         ua_server_ = uaServer;
         bridge_state_ = bridgeState;
-        bridge_options_ = bridgeOptions.Value;
+        mapping_store_ = mappingStore;
         da_settings_ = daSettings;
         da_client_factory_ = daClientFactory;
         logger_ = logger;
@@ -35,14 +34,16 @@ public sealed class BridgeWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         DaRuntimeSettingsSnapshot settings = da_settings_.GetSnapshot();
-        bridge_state_.Configure(settings.Mode, settings.UpdateRateMs, bridge_options_.Mappings.Count);
+        (IReadOnlyList<TagMapping> mappings, long mappingVersion) = mapping_store_.GetSnapshot();
+        bridge_state_.Configure(settings.Mode, settings.UpdateRateMs, mappings.Count);
 
         try
         {
-            logger_.LogInformation("Starting bridge with {MappingCount} mappings", bridge_options_.Mappings.Count);
-            await ua_server_.StartAsync(bridge_options_.Mappings, stoppingToken).ConfigureAwait(false);
+            logger_.LogInformation("Starting bridge with {MappingCount} mappings", mappings.Count);
+            await ua_server_.StartAsync(mappings, stoppingToken).ConfigureAwait(false);
 
             long connectedVersion = -1;
+            long uaMappingVersion = mappingVersion;
             IDaClient? daClient = null;
 
             try
@@ -50,9 +51,20 @@ public sealed class BridgeWorker : BackgroundService
                 while (!stoppingToken.IsCancellationRequested)
                 {
                     settings = da_settings_.GetSnapshot();
+                    (mappings, mappingVersion) = mapping_store_.GetSnapshot();
 
                     try
                     {
+                        // Apply tag mapping changes live (add/remove UA nodes) and force DA refresh.
+                        if (mappingVersion != uaMappingVersion)
+                        {
+                            ua_server_.SyncMappings(mappings);
+                            uaMappingVersion = mappingVersion;
+                            connectedVersion = -1; // force DA client to reconfigure items
+                            bridge_state_.Configure(settings.Mode, settings.UpdateRateMs, mappings.Count);
+                            logger_.LogInformation("Applied tag mapping change: {Count} mappings", mappings.Count);
+                        }
+
                         if (daClient is null || connectedVersion != settings.Version)
                         {
                             if (daClient is not null)
@@ -65,7 +77,7 @@ public sealed class BridgeWorker : BackgroundService
                             }
 
                             bridge_state_.SetDaMode(settings.Mode);
-                            bridge_state_.Configure(settings.Mode, settings.UpdateRateMs, bridge_options_.Mappings.Count);
+                            bridge_state_.Configure(settings.Mode, settings.UpdateRateMs, mappings.Count);
                             bridge_state_.SetDaConnectionState("Connecting");
 
                             daClient = da_client_factory_.Create(settings);
@@ -75,7 +87,7 @@ public sealed class BridgeWorker : BackgroundService
                         }
 
                         IReadOnlyList<BridgeValue> values = await daClient
-                            .ReadAsync(bridge_options_.Mappings, stoppingToken)
+                            .ReadAsync(mappings, stoppingToken)
                             .ConfigureAwait(false);
 
                         bridge_state_.UpdateDaRead(values);

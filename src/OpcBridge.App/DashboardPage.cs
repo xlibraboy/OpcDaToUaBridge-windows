@@ -272,17 +272,36 @@ internal static class DashboardPage
 
 <!-- ═══ TAGS ═══ -->
 <div class="view" id="view-tags">
-    <div class="box">
-        <div class="box-h">
-            OPC DA Tag Browser
-            <button class="btn ghost" id="btnBrowseTags" type="button" onclick="browseTags('')" style="margin-left:auto">
-                <svg class="icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Browse
-            </button>
+    <div class="grid2">
+        <!-- Tag browser -->
+        <div class="box">
+            <div class="box-h">
+                Tag Browser
+                <button class="btn ghost" id="btnBrowseTags" type="button" onclick="browseTags('')" style="margin-left:auto">
+                    <svg class="icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Browse
+                </button>
+            </div>
+            <div class="box-b" style="border-bottom:1px solid var(--border);padding:9px 14px">
+                <span class="msg" id="tagBreadcrumb">Uses the Selected server (Connection tab). Click + to map a tag.</span>
+            </div>
+            <div class="box-b"><div class="tree" id="tagTree"><span class="msg">Click "Browse" to explore the server's address space.</span></div></div>
         </div>
-        <div class="box-b" style="border-bottom:1px solid var(--border);padding:9px 14px">
-            <span class="msg" id="tagBreadcrumb">Uses the Selected server from the Connection tab. Click a tag to copy its ItemID.</span>
+
+        <!-- Mapped tags -->
+        <div class="box">
+            <div class="box-h">
+                Mapped Tags <span class="msg" id="mapCount" style="margin-left:auto;text-transform:none;letter-spacing:0"></span>
+            </div>
+            <div class="box-b">
+                <div class="field" style="margin-bottom:8px">
+                    <input id="manualItem" type="text" placeholder="Manual DA Item ID" style="flex:1">
+                    <button class="btn ghost" type="button" onclick="addManual()">
+                        <svg class="icon" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add
+                    </button>
+                </div>
+                <div class="list" id="mappedList" style="max-height:380px"></div>
+            </div>
         </div>
-        <div class="box-b"><div class="tree" id="tagTree"><span class="msg">Click "Browse" to explore the server's address space.</span></div></div>
     </div>
 </div>
 """;
@@ -477,17 +496,45 @@ async function browseTags(path) {
         for (const b of br) { const child = tagPath ? tagPath+'.'+b : b;
             html += `<div class="tn b" onclick="browseTags(${JSON.stringify(child)})"><svg class="icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span>${esc(b)}</span></div>`; }
         for (const t of tg) { const name = t.name||t.Name, itemId = t.itemId||t.ItemId;
-            html += `<div class="tn t" onclick="copyTag(${JSON.stringify(itemId)})" title="Click to copy ItemID"><svg class="icon" viewBox="0 0 24 24"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span>${esc(name)}</span><span class="pid">${esc(itemId)}</span></div>`; }
+            html += `<div class="tn t"><svg class="icon" viewBox="0 0 24 24"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span>${esc(name)}</span><span class="pid">${esc(itemId)}</span><button class="btn ghost" style="padding:2px 8px;margin-left:8px" onclick="addTag(${JSON.stringify(itemId)},${JSON.stringify(name)})">+ Add</button></div>`; }
         if (!br.length && !tg.length) html += '<span class="msg">Empty.</span>';
         tree.innerHTML = html;
     } catch(e) { tree.innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
     finally { btn.disabled = false; }
 }
-function copyTag(id) {
-    navigator.clipboard?.writeText(id);
-    const tree = el('tagTree'), n = document.createElement('div');
-    n.className = 'msg good'; n.style.padding = '6px 9px'; n.textContent = '\u2713 Copied: ' + id;
-    tree.prepend(n); setTimeout(() => n.remove(), 2500);
+// ── Mapped tags ───────────────────────────────────────────────────
+async function loadMappings() {
+    try {
+        const p = await (await fetch('/api/mappings', { cache:'no-store' })).json();
+        const m = p.mappings || [];
+        el('mapCount').textContent = m.length + (m.length===1?' tag':' tags');
+        el('mappedList').innerHTML = m.length ? m.map(t => {
+            const item = t.daItemId||t.DaItemId, name = t.displayName||t.DisplayName||item, dt = t.dataType||t.DataType||'Auto';
+            return `<div class="li" style="flex-direction:row;align-items:center;gap:10px">
+                <div style="flex:1"><div class="n">${esc(name)}</div><div class="p">${esc(item)} &middot; ${esc(dt)}</div></div>
+                <button class="btn ghost" style="padding:3px 9px" onclick="removeMapping(${JSON.stringify(item)})">Remove</button></div>`;
+        }).join('') : '<span class="msg">No mapped tags. Add some from the browser.</span>';
+    } catch(e) { el('mappedList').innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+}
+async function addTag(itemId, name) {
+    try {
+        await fetch('/api/mappings/add', { method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ tags: [{ daItemId: itemId, displayName: name || itemId, dataType: 'Auto' }] }) });
+        await loadMappings();
+    } catch(e) { alert('Add failed: ' + e.message); }
+}
+async function addManual() {
+    const v = el('manualItem').value.trim();
+    if (!v) return;
+    await addTag(v, v);
+    el('manualItem').value = '';
+}
+async function removeMapping(itemId) {
+    try {
+        await fetch('/api/mappings/remove', { method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ daItemId: itemId }) });
+        await loadMappings();
+    } catch(e) { alert('Remove failed: ' + e.message); }
 }
 
 // ── Init ──────────────────────────────────────────────────────────
@@ -495,6 +542,7 @@ el('modeApply').addEventListener('click', applyMode);
 const initTab = location.hash.slice(1);
 if (['monitor','connection','tags'].includes(initTab)) showTab(initTab);
 loadServerConfig();
+loadMappings();
 refresh();
 setInterval(refresh, 1000);
 </script>

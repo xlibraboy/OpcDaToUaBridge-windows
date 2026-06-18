@@ -19,6 +19,7 @@ builder.Services.Configure<UaServerOptions>(builder.Configuration.GetSection("Ua
 builder.Services.AddSingleton<DaRuntimeSettings>();
 builder.Services.AddSingleton<DaClientFactory>();
 builder.Services.AddSingleton<BridgeState>();
+builder.Services.AddSingleton<MappingStore>();
 builder.Services.AddSingleton<UaServerHost>();
 builder.Services.AddHostedService<BridgeWorker>();
 
@@ -100,6 +101,30 @@ app.MapPost("/api/da/tags", async (DaTagBrowseRequest request) =>
     {
         return Results.Json(new { error = ex.Message, branches = Array.Empty<object>(), tags = Array.Empty<object>() });
     }
+});
+app.MapGet("/api/mappings", (MappingStore store) =>
+{
+    var (mappings, version) = store.GetSnapshot();
+    return Results.Json(new { mappings, version });
+});
+app.MapPost("/api/mappings/add", (MappingAddRequest request, MappingStore store) =>
+{
+    var tags = (request.Tags ?? new List<MappingTagDto>())
+        .Where(t => !string.IsNullOrWhiteSpace(t.DaItemId))
+        .Select(t => new OpcBridge.Core.TagMapping
+        {
+            DaItemId = t.DaItemId,
+            DisplayName = t.DisplayName ?? string.Empty,
+            DataType = t.DataType ?? "Auto",
+            UaNodeId = t.UaNodeId ?? string.Empty
+        });
+    long version = store.Add(tags);
+    return Results.Json(new { version });
+});
+app.MapPost("/api/mappings/remove", (MappingRemoveRequest request, MappingStore store) =>
+{
+    long version = store.Remove(request.DaItemId);
+    return Results.Json(new { version });
 });
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 

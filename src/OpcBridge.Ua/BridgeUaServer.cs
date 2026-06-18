@@ -19,6 +19,34 @@ internal sealed class BridgeUaServer : StandardServer
         node_manager_?.UpdateValue(value);
     }
 
+    /// <summary>Diffs the running address space against the desired mappings, adding/removing nodes live.</summary>
+    public void SyncMappings(IReadOnlyList<TagMapping> mappings)
+    {
+        if (node_manager_ is null)
+        {
+            return;
+        }
+
+        var desired = new HashSet<string>(mappings.Select(m => m.DaItemId), StringComparer.OrdinalIgnoreCase);
+        var current = new HashSet<string>(node_manager_.GetMappedItemIds(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (string itemId in current)
+        {
+            if (!desired.Contains(itemId))
+            {
+                node_manager_.RemoveMapping(itemId);
+            }
+        }
+
+        foreach (TagMapping mapping in mappings)
+        {
+            if (!current.Contains(mapping.DaItemId))
+            {
+                node_manager_.AddMapping(mapping);
+            }
+        }
+    }
+
     public int GetConnectedSessionCount()
     {
         return ServerInternal.SessionManager

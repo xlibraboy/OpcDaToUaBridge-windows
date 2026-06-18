@@ -9,6 +9,7 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
     private const string NamespaceUri = "urn:ohmypi:opc-da-to-ua-bridge:tags";
     private readonly IReadOnlyList<TagMapping> mappings_;
     private readonly Dictionary<string, BaseDataVariableState> variables_by_da_item_ = new(StringComparer.OrdinalIgnoreCase);
+    private FolderState? root_folder_;
     private ushort namespace_index_;
 
     public BridgeNodeManager(
@@ -37,6 +38,7 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
             root.AddReference(ReferenceTypeIds.Organizes, true, ObjectIds.ObjectsFolder);
             references.Add(new NodeStateReference(ReferenceTypeIds.Organizes, false, root.NodeId));
             AddPredefinedNode(SystemContext, root);
+            root_folder_ = root;
 
             for (int i = 0; i < mappings_.Count; i++)
             {
@@ -45,6 +47,47 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
                 variables_by_da_item_[mapping.DaItemId] = variable;
                 AddPredefinedNode(SystemContext, variable);
             }
+        }
+    }
+
+    /// <summary>Adds a tag variable to the running address space (no server restart).</summary>
+    public void AddMapping(TagMapping mapping)
+    {
+        lock (Lock)
+        {
+            if (root_folder_ is null || variables_by_da_item_.ContainsKey(mapping.DaItemId))
+            {
+                return;
+            }
+
+            BaseDataVariableState variable = CreateVariable(root_folder_, mapping);
+            variables_by_da_item_[mapping.DaItemId] = variable;
+            AddPredefinedNode(SystemContext, variable);
+        }
+    }
+
+    /// <summary>Removes a tag variable from the running address space.</summary>
+    public void RemoveMapping(string daItemId)
+    {
+        lock (Lock)
+        {
+            if (!variables_by_da_item_.TryGetValue(daItemId, out BaseDataVariableState? variable))
+            {
+                return;
+            }
+
+            root_folder_?.RemoveChild(variable);
+            DeleteNode(SystemContext, variable.NodeId);
+            variables_by_da_item_.Remove(daItemId);
+        }
+    }
+
+    /// <summary>Returns the DA item IDs currently exposed in the address space.</summary>
+    public IReadOnlyCollection<string> GetMappedItemIds()
+    {
+        lock (Lock)
+        {
+            return variables_by_da_item_.Keys.ToArray();
         }
     }
 

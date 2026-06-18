@@ -25,11 +25,6 @@ public sealed class UaServerHost : IAsyncDisposable
 
     public async Task StartAsync(IReadOnlyList<TagMapping> mappings, CancellationToken cancellationToken)
     {
-        if (mappings.Count == 0)
-        {
-            throw new InvalidOperationException("At least one tag mapping is required.");
-        }
-
         ApplicationConfiguration configuration = CreateConfiguration();
         await configuration.ValidateAsync(ApplicationType.Server).ConfigureAwait(false);
 
@@ -56,6 +51,11 @@ public sealed class UaServerHost : IAsyncDisposable
     public void UpdateValue(BridgeValue value)
     {
         server_?.UpdateValue(value);
+    }
+
+    public void SyncMappings(IReadOnlyList<TagMapping> mappings)
+    {
+        server_?.SyncMappings(mappings);
     }
 
     public UaServerStatus GetStatus()
