@@ -28,3 +28,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Publish output (build artifacts)
+publish/
+
+# Runtime state (generated at runtime)
+mappings.json
