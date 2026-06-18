@@ -294,7 +294,11 @@ internal static class DashboardPage
         <div class="sel-bar">
             <span class="sel-label">Selected</span>
             <input id="cfgProgId" type="text" placeholder="ProgID" style="flex:1;min-width:200px">
-            <input id="cfgHost"   type="text" placeholder="Host" style="width:160px">
+            <input id="cfgHost"   type="text" placeholder="Host" style="width:150px" oninput="toggleCredentials()">
+            <span class="sel-label" id="credLabel" style="display:none">Credentials</span>
+            <input id="cfgUser"   type="text"     placeholder="Username" style="width:130px;display:none">
+            <input id="cfgPass"   type="password" placeholder="Password" style="width:120px;display:none">
+            <input id="cfgDomain" type="text"     placeholder="Domain (optional)" style="width:150px;display:none">
             <button class="btn" id="cfgApply" type="button" onclick="applyServerConfig()">
                 <svg class="icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
                 Apply
@@ -481,11 +485,20 @@ function selectServer(progId, host, itemId) {
     el(itemId)?.classList.add('active');
     el('cfgProgId').value = progId;
     el('cfgHost').value   = host;
+    toggleCredentials();
     el('cfgMessage').textContent = 'Selected — click Apply to connect';
     el('cfgMessage').className   = 'msg warn';
 }
 
 // ── Server config apply ───────────────────────────────────────────
+function toggleCredentials() {
+    const isRemote = el('cfgHost').value.trim().toLowerCase() !== 'localhost' &&
+                     el('cfgHost').value.trim() !== '';
+    ['credLabel','cfgUser','cfgPass','cfgDomain'].forEach(id => {
+        el(id).style.display = isRemote ? '' : 'none';
+    });
+}
+
 async function loadServerConfig() {
     try {
         const r = await fetch('/api/da/config', { cache: 'no-store' });
@@ -493,6 +506,9 @@ async function loadServerConfig() {
         const p = await r.json();
         el('cfgProgId').value = p.progId || p.ProgId || '';
         el('cfgHost').value   = p.host   || p.Host   || 'localhost';
+        el('cfgUser').value   = p.remoteUsername || '';
+        el('cfgDomain').value = p.remoteDomain   || '';
+        toggleCredentials();
     } catch {}
 }
 
@@ -500,9 +516,16 @@ async function applyServerConfig() {
     const btn = el('cfgApply'), msg = el('cfgMessage');
     btn.disabled = true; msg.textContent = 'Saving…'; msg.className = 'msg warn';
     try {
+        const body = {
+            progId: el('cfgProgId').value.trim(),
+            host:   el('cfgHost').value.trim() || 'localhost',
+            remoteUsername: el('cfgUser').value.trim()   || null,
+            remotePassword: el('cfgPass').value          || null,
+            remoteDomain:   el('cfgDomain').value.trim() || null
+        };
         const r = await fetch('/api/da/config', {
             method: 'POST', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ progId: el('cfgProgId').value.trim(), host: el('cfgHost').value.trim() || 'localhost' })
+            body: JSON.stringify(body)
         });
         if (!r.ok) throw new Error('HTTP ' + r.status);
         msg.textContent = '✓ Saved — switch to OpcDa mode to connect';

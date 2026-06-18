@@ -1,7 +1,7 @@
 using System.Runtime.Versioning;
-
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
+using System.Security.Principal;
 using OpcBridge.Core;
 
 namespace OpcBridge.Da;
@@ -47,6 +47,56 @@ public sealed class OpcDaClient : IDaClient
         }
 
         string? host = NormalizeHost(options_.Host);
+
+        // Use impersonation for remote connections with explicit credentials
+        bool hasCredentials = host is not null
+            && !string.IsNullOrWhiteSpace(options_.RemoteUsername);
+
+        if (hasCredentials)
+        {
+            ConnectWithImpersonation(progId, host!);
+        }
+        else
+        {
+            ConnectDirect(progId, host);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private void ConnectWithImpersonation(string progId, string host)
+    {
+        string username = options_.RemoteUsername!.Trim();
+        string password = options_.RemotePassword ?? string.Empty;
+        string domain   = string.IsNullOrWhiteSpace(options_.RemoteDomain)
+            ? host  // use host as domain for local accounts on remote machine
+            : options_.RemoteDomain.Trim();
+
+        // LOGON32_LOGON_NEW_CREDENTIALS (9) — best for network/DCOM impersonation
+        // LOGON32_PROVIDER_WINNT50 (3)
+        if (!LogonUser(username, domain, password, 9, 3, out nint token))
+        {
+            int error = Marshal.GetLastWin32Error();
+            throw new InvalidOperationException(
+                $"Logon failed for '{domain}\\{username}' (Win32 error {error}). " +
+                "Check RemoteUsername, RemotePassword, RemoteDomain.");
+        }
+
+        try
+        {
+            using var identity = new WindowsIdentity(token);
+            WindowsIdentity.RunImpersonated(identity.AccessToken, () => ConnectDirect(progId, host));
+        }
+        finally
+        {
+            CloseHandle(token);
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private void ConnectDirect(string progId, string? host)
+    {
         Type? serverType = host is null
             ? Type.GetTypeFromProgID(progId, throwOnError: false)
             : Type.GetTypeFromProgID(progId, host, throwOnError: false);
@@ -90,8 +140,6 @@ public sealed class OpcDaClient : IDaClient
         sync_io_ = syncIo;
         server_group_handle_ = serverGroupHandle;
         item_bindings_ = [];
-
-        return Task.CompletedTask;
     }
 
     public Task<IReadOnlyList<BridgeValue>> ReadAsync(
@@ -408,6 +456,13 @@ public sealed class OpcDaClient : IDaClient
 
     [DllImport("oleaut32.dll")]
     private static extern int VariantClear(IntPtr pvarg);
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool LogonUser(string username, string domain, string password,
+        int logonType, int logonProvider, out nint token);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(nint handle);
 
     private sealed record ItemBinding(string DaItemId, int ServerHandle);
 

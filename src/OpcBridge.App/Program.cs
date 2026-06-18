@@ -45,11 +45,20 @@ app.MapPost("/api/da/mode", (ModeChangeRequest request, DaRuntimeSettings settin
 app.MapGet("/api/da/config", (DaRuntimeSettings settings) =>
 {
     DaRuntimeSettingsSnapshot snapshot = settings.GetSnapshot();
-    return Results.Json(new { progId = snapshot.ProgId, host = snapshot.Host });
+    return Results.Json(new
+    {
+        progId = snapshot.ProgId,
+        host = snapshot.Host,
+        remoteUsername = snapshot.RemoteUsername,
+        remoteDomain = snapshot.RemoteDomain
+        // password intentionally omitted from GET response
+    });
 });
 app.MapPost("/api/da/config", (DaServerConfigRequest request, DaRuntimeSettings settings) =>
 {
-    DaRuntimeSettingsSnapshot snapshot = settings.SetServerConfig(request.ProgId, request.Host);
+    DaRuntimeSettingsSnapshot snapshot = settings.SetServerConfig(
+        request.ProgId, request.Host,
+        request.RemoteUsername, request.RemotePassword, request.RemoteDomain);
     return Results.Json(new { progId = snapshot.ProgId, host = snapshot.Host, version = snapshot.Version });
 });
 app.MapGet("/api/da/servers", async (string? host) =>

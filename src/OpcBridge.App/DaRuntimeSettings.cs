@@ -15,6 +15,9 @@ public sealed class DaRuntimeSettings
             options.Value.ProgId,
             options.Value.Host,
             options.Value.UpdateRateMs,
+            options.Value.RemoteUsername,
+            options.Value.RemotePassword,
+            options.Value.RemoteDomain,
             0);
     }
 
@@ -47,20 +50,20 @@ public sealed class DaRuntimeSettings
         }
     }
 
-    public DaRuntimeSettingsSnapshot SetServerConfig(string progId, string host)
+    public DaRuntimeSettingsSnapshot SetServerConfig(string progId, string host,
+        string? username = null, string? password = null, string? domain = null)
     {
-        string trimmedProgId = progId?.Trim() ?? string.Empty;
-        string trimmedHost = host?.Trim() ?? "localhost";
-
         lock (sync_)
         {
             snapshot_ = snapshot_ with
             {
-                ProgId = trimmedProgId,
-                Host = trimmedHost,
+                ProgId = progId?.Trim() ?? string.Empty,
+                Host = host?.Trim() ?? "localhost",
+                RemoteUsername = string.IsNullOrWhiteSpace(username) ? null : username.Trim(),
+                RemotePassword = string.IsNullOrWhiteSpace(password) ? null : password,
+                RemoteDomain   = string.IsNullOrWhiteSpace(domain)   ? null : domain.Trim(),
                 Version = snapshot_.Version + 1
             };
-
             return snapshot_;
         }
     }
@@ -91,6 +94,9 @@ public sealed record DaRuntimeSettingsSnapshot(
     string ProgId,
     string Host,
     int UpdateRateMs,
+    string? RemoteUsername,
+    string? RemotePassword,
+    string? RemoteDomain,
     long Version)
 {
     public DaClientOptions ToOptions()
@@ -100,7 +106,10 @@ public sealed record DaRuntimeSettingsSnapshot(
             Mode = Mode,
             ProgId = ProgId,
             Host = Host,
-            UpdateRateMs = UpdateRateMs
+            UpdateRateMs = UpdateRateMs,
+            RemoteUsername = RemoteUsername,
+            RemotePassword = RemotePassword,
+            RemoteDomain   = RemoteDomain
         };
     }
 }
