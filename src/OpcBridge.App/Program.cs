@@ -1,7 +1,9 @@
+using System.Reflection;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using OpcBridge.App;
 using OpcBridge.Core;
 using OpcBridge.Da;
@@ -15,6 +17,9 @@ builder.Configuration.AddJsonFile("appsettings.json", optional: false, reloadOnC
 builder.Services.Configure<BridgeOptions>(builder.Configuration.GetSection("Bridge"));
 builder.Services.Configure<DaClientOptions>(builder.Configuration.GetSection("Da"));
 builder.Services.Configure<UaServerOptions>(builder.Configuration.GetSection("Ua"));
+builder.Services.AddSingleton<DashboardLogStore>();
+builder.Logging.Services.AddSingleton<ILoggerProvider, DashboardLogProvider>();
+
 
 builder.Services.AddSingleton<DaRuntimeSettings>();
 builder.Services.AddSingleton<DaClientFactory>();
@@ -38,6 +43,41 @@ app.MapGet("/api/dashboard", (BridgeState state, UaServerHost uaServer) => Resul
     ua = uaServer.GetStatus(),
     values = state.GetValues()
 }));
+app.MapGet("/api/logs", (DashboardLogStore logStore, int? limit, string? level) =>
+{
+    LogLevel? minimumLevel = TryParseLogLevel(level, out LogLevel parsedLevel)
+        ? parsedLevel
+        : null;
+
+    IReadOnlyList<DashboardLogEntry> entries = logStore.GetEntries(limit ?? 200, minimumLevel);
+    return Results.Json(new
+    {
+        entries = entries.Select(entry => new
+        {
+            timestampUtc = entry.TimestampUtc,
+            level = entry.Level.ToString(),
+            category = entry.Category,
+            message = entry.Message,
+            exceptionText = entry.ExceptionText
+        })
+    });
+});
+app.MapGet("/api/app-info", () =>
+{
+    Assembly assembly = typeof(Program).Assembly;
+    AssemblyName assemblyName = assembly.GetName();
+    return Results.Json(new
+    {
+        name = assemblyName.Name ?? "OpcBridge.App",
+        version = assemblyName.Version?.ToString() ?? "0.0.0.0",
+        informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? string.Empty,
+        framework = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
+        processArchitecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
+        osDescription = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
+        machineName = Environment.MachineName,
+        creator = "xlibraboy"
+    });
+});
 app.MapGet("/api/da/sources", (DaRuntimeSettings settings) =>
 {
     DaRuntimeSettingsSnapshot snapshot = settings.GetSnapshot();
@@ -225,7 +265,14 @@ static OpcTagBrowseResult BrowseDaTags(DaTagBrowseRequest request)
         request.RemoteDomain);
 }
 
-namespace OpcBridge.App
+
+static bool TryParseLogLevel(string? value, out LogLevel level)
 {
-    public sealed record DaSourceRemoveRequest(string SourceId);
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        level = LogLevel.None;
+        return false;
+    }
+
+    return Enum.TryParse(value.Trim(), ignoreCase: true, out level);
 }

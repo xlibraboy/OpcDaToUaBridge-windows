@@ -52,6 +52,11 @@ internal static class DashboardPage
         .stat .k { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
         .stat .v { margin-top: 6px; font-size: 16px; font-weight: 700; line-height: 1.1; }
         .stat .s { margin-top: 4px; color: var(--muted); font-size: 11px; }
+        .mini-meter { margin-top: 7px; }
+        .mini-meter-track { height: 6px; border-radius: 999px; background: var(--panel2); border: 1px solid var(--border); overflow: hidden; }
+        .mini-meter-fill { height: 100%; width: 0%; background: var(--good); transition: width .2s ease, background-color .2s ease; }
+        .mini-meter-fill.warn { background: var(--warn); }
+        .mini-meter-fill.bad { background: var(--bad); }
         .badge { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; }
         .badge::before { content:''; width:6px; height:6px; border-radius:50%; background:currentColor; }
         .badge.good { color: var(--good); background: rgba(52,211,153,.12); }
@@ -86,6 +91,21 @@ internal static class DashboardPage
         .good { color: var(--good); }
         .bad { color: var(--bad); }
         .source-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
+        .log-panel { display: flex; flex-direction: column; gap: 10px; }
+        .log-view { background: var(--bg); border: 1px solid var(--border2); border-radius: 6px; padding: 10px 12px; max-height: 520px; overflow: auto; font-family: 'Consolas', 'SF Mono', monospace; font-size: 12px; line-height: 1.45; }
+        .log-entry { padding: 8px 0; border-bottom: 1px solid var(--border); }
+        .log-entry:last-child { border-bottom: none; }
+        .log-entry .meta { color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+        .log-entry .message { white-space: pre-wrap; word-break: break-word; }
+        .log-entry .exception { white-space: pre-wrap; word-break: break-word; margin-top: 6px; color: var(--bad); }
+        .doc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+        .doc-card { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; }
+        .doc-card h3 { font-size: 13px; margin-bottom: 8px; }
+        .doc-card ul { padding-left: 18px; color: var(--muted); }
+        .doc-card li + li { margin-top: 6px; }
+        .kv { display: grid; grid-template-columns: 140px 1fr; gap: 8px 12px; align-items: start; }
+        .kv .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+        .kv .v { word-break: break-word; }
         @media (max-width: 1100px) { .split { grid-template-columns: 1fr; } }
     </style>
 </head>
@@ -105,6 +125,9 @@ internal static class DashboardPage
     <button class="tabbtn active" data-tab="monitor" onclick="showTab('monitor')">Monitor</button>
     <button class="tabbtn" data-tab="connection" onclick="showTab('connection')">Connection</button>
     <button class="tabbtn" data-tab="tags" onclick="showTab('tags')">Tags</button>
+    <button class="tabbtn" data-tab="logs" onclick="showTab('logs')">Logs</button>
+    <button class="tabbtn" data-tab="help" onclick="showTab('help')">Help</button>
+    <button class="tabbtn" data-tab="about" onclick="showTab('about')">About</button>
 </div>
 <div class="view active" id="view-monitor">
     <div class="stats">
@@ -113,7 +136,7 @@ internal static class DashboardPage
         <div class="stat"><div class="k">Last DA read</div><div class="v" id="lastDaRead">&#8212;</div><div class="s" id="lastDaReadCount">0 values</div></div>
         <div class="stat"><div class="k">Last UA write</div><div class="v" id="lastUaWrite">&#8212;</div><div class="s" id="lastUaWriteCount">0 values</div></div>
         <div class="stat"><div class="k">OPC UA server</div><div class="v" id="uaState">&#8212;</div><div class="s" id="uaClients">0 clients</div></div>
-        <div class="stat"><div class="k">Update rate</div><div class="v" id="updateRate">&#8212;</div><div class="s" id="mappingCount">0 tags</div></div>
+        <div class="stat"><div class="k">Update rate</div><div class="v" id="updateRate">&#8212;</div><div class="s" id="mappingCount">0 tags</div><div class="mini-meter" aria-hidden="true"><div class="mini-meter-track"><div class="mini-meter-fill" id="pollUtilizationFill"></div></div></div><div class="s" id="pollUtilizationText">Cycle budget —</div><div class="s" id="pollSaturation">Cycle timing normal.</div></div>
     </div>
     <div class="grid2" style="margin-bottom:14px">
         <div class="box">
@@ -205,6 +228,74 @@ internal static class DashboardPage
         </div>
     </div>
 </div>
+<div class="view" id="view-logs">
+    <div class="box">
+        <div class="box-h">Recent Logs</div>
+        <div class="box-b log-panel">
+            <div class="toolbar">
+                <button class="btn ghost" id="btnRefreshLogs" type="button">Refresh Logs</button>
+                <label class="fl" for="logLevel" style="width:auto">Minimum Level</label>
+                <select id="logLevel">
+                    <option value="Information">Information</option>
+                    <option value="Warning">Warning</option>
+                    <option value="Error">Error</option>
+                </select>
+                <span class="msg" id="logMessage">Showing recent in-app logs.</span>
+            </div>
+            <div class="log-view" id="logEntries"><span class="msg">Loading logs…</span></div>
+        </div>
+    </div>
+</div>
+<div class="view" id="view-help">
+    <div class="box">
+        <div class="box-h">Operator Help</div>
+        <div class="box-b">
+            <div class="doc-grid">
+                <div class="doc-card">
+                    <h3>Basic Workflow</h3>
+                    <ul>
+                        <li>Use <b>Connection</b> to configure the OPC DA source, host, and update rate.</li>
+                        <li>Use <b>Tags</b> to browse DA items and create DA → OPC UA mappings.</li>
+                        <li>Use <b>Monitor</b> to confirm source reads, live values, and OPC UA writes.</li>
+                    </ul>
+                </div>
+                <div class="doc-card">
+                    <h3>Update Rate Tuning</h3>
+                    <ul>
+                        <li>Lower update rate means faster polling; the practical minimum is 100 ms.</li>
+                        <li>Watch the cycle-budget bar: green is healthy, yellow is tight, red is saturated.</li>
+                        <li>If saturation appears, increase the rate or reduce mapped load per source.</li>
+                    </ul>
+                </div>
+                <div class="doc-card">
+                    <h3>Troubleshooting</h3>
+                    <ul>
+                        <li>Use <b>Logs</b> to review recent warnings and errors from the bridge and UA server.</li>
+                        <li>If DA browse fails, check ProgID, host reachability, DCOM permissions, and credentials.</li>
+                        <li>If values stop moving, verify source status, last read timing, and the last error field.</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="view" id="view-about">
+    <div class="box">
+        <div class="box-h">About This App</div>
+        <div class="box-b">
+            <div class="kv">
+                <div class="k">Application</div><div class="v" id="aboutName">—</div>
+                <div class="k">Version</div><div class="v" id="aboutVersion">—</div>
+                <div class="k">Informational Build</div><div class="v" id="aboutInfoVersion">—</div>
+                <div class="k">Framework</div><div class="v" id="aboutFramework">—</div>
+                <div class="k">Architecture</div><div class="v" id="aboutArchitecture">—</div>
+                <div class="k">Operating System</div><div class="v" id="aboutOs">—</div>
+                <div class="k">Machine</div><div class="v" id="aboutMachine">—</div>
+                <div class="k">Creator</div><div class="v" id="aboutCreator">—</div>
+            </div>
+        </div>
+    </div>
+</div>
 """;
 
     public const string Script = """
@@ -220,13 +311,17 @@ const state = {
     editingNewSource: false,
     liveValuesEnabled: true,
     lastValueCount: 0,
-    updateRateMs: 1000
+    updateRateMs: 1000,
+    logsLoaded: false,
+    appInfoLoaded: false
 };
 
 function showTab(name) {
     document.querySelectorAll('.tabbtn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
     document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
     if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
+    if (name === 'logs') loadLogs().catch(e => el('logMessage').textContent = '✗ ' + e.message);
+    if (name === 'about') loadAppInfo().catch(e => el('aboutName').textContent = '✗ ' + e.message);
 }
 function badge(t, c) { return `<span class="badge ${c}">${esc(t)}</span>`; }
 function stateClass(v) {
@@ -311,6 +406,69 @@ function formatUaDiagnostics(ua) {
     const lastUpdateUtc = get(ua, 'lastValueUpdateUtc');
     return nodeCount + ' nodes · last node update ' + (lastUpdateUtc ? relTime(lastUpdateUtc) : 'never');
 }
+function formatPollSaturation(lastPollDurationMs, updateRateMs) {
+    const duration = Number(lastPollDurationMs ?? 0);
+    const rate = Number(updateRateMs ?? 0);
+    if (duration <= 0 || rate <= 0) return { text: 'Waiting for cycle timing…', className: 's' };
+    if (duration >= rate) return { text: 'Poll saturated · cycle time is at or above the configured rate.', className: 's bad' };
+    if (duration >= rate * 0.8) return { text: 'Cycle budget is getting tight.', className: 's warn' };
+    return { text: 'Cycle timing normal.', className: 's' };
+}
+
+function formatPollUtilization(lastPollDurationMs, updateRateMs) {
+    const duration = Number(lastPollDurationMs ?? 0);
+    const rate = Number(updateRateMs ?? 0);
+    if (duration <= 0 || rate <= 0) {
+        return { width: '0%', className: 'mini-meter-fill', text: 'Cycle budget —' };
+    }
+
+    const percent = Math.max(0, Math.round((duration / rate) * 100));
+    const clampedPercent = Math.max(0, Math.min(percent, 100));
+    const className = percent >= 100
+        ? 'mini-meter-fill bad'
+        : percent >= 80
+            ? 'mini-meter-fill warn'
+            : 'mini-meter-fill';
+
+    return {
+        width: clampedPercent + '%',
+        className,
+        text: 'Cycle budget ' + percent + '%'
+    };
+}
+async function loadLogs(force = false) {
+    if (state.logsLoaded && !force) return;
+    const level = el('logLevel')?.value || 'Information';
+    el('logMessage').textContent = 'Loading logs…';
+    const payload = await (await fetch('/api/logs?limit=200&level=' + encodeURIComponent(level), { cache: 'no-store' })).json();
+    const entries = payload.entries || [];
+    el('logEntries').innerHTML = entries.length ? entries.map(entry => {
+        const timestamp = locTime(entry.timestampUtc || entry.TimestampUtc);
+        const levelText = entry.level || entry.Level || 'Information';
+        const category = entry.category || entry.Category || 'App';
+        const message = entry.message || entry.Message || '';
+        const exceptionText = entry.exceptionText || entry.ExceptionText || '';
+        return `<div class="log-entry"><div class="meta">${esc(timestamp)} · ${esc(levelText)} · ${esc(category)}</div><div class="message">${esc(message)}</div>${exceptionText ? `<div class="exception">${esc(exceptionText)}</div>` : ''}</div>`;
+    }).join('') : '<span class="msg">No log entries for this filter yet.</span>';
+    el('logMessage').textContent = entries.length + ' recent entries';
+    state.logsLoaded = true;
+}
+
+async function loadAppInfo(force = false) {
+    if (state.appInfoLoaded && !force) return;
+    const payload = await (await fetch('/api/app-info', { cache: 'no-store' })).json();
+    el('aboutName').textContent = payload.name || 'OpcBridge.App';
+    el('aboutVersion').textContent = payload.version || '—';
+    el('aboutInfoVersion').textContent = payload.informationalVersion || '—';
+    el('aboutFramework').textContent = payload.framework || '—';
+    el('aboutArchitecture').textContent = payload.processArchitecture || '—';
+    el('aboutOs').textContent = payload.osDescription || '—';
+    el('aboutMachine').textContent = payload.machineName || '—';
+    el('aboutCreator').textContent = payload.creator || '—';
+    state.appInfoLoaded = true;
+}
+
+
 
 async function refresh() {
     try {
@@ -337,8 +495,15 @@ async function refresh() {
         el('uaState').innerHTML = badge(get(ua, 'state') || '—', stateClass(get(ua, 'state')));
         el('uaClients').textContent = (get(ua, 'connectedClientCount') ?? 0) + ' clients';
         const updateRateMs = Number(get(b, 'updateRateMs') || state.updateRateMs || 1000);
+        const pollSaturation = formatPollSaturation(get(b, 'lastPollDurationMs'), updateRateMs);
+        const pollUtilization = formatPollUtilization(get(b, 'lastPollDurationMs'), updateRateMs);
         state.updateRateMs = updateRateMs;
         el('updateRate').textContent = updateRateMs + ' ms';
+        el('pollUtilizationFill').style.width = pollUtilization.width;
+        el('pollUtilizationFill').className = pollUtilization.className;
+        el('pollUtilizationText').textContent = pollUtilization.text;
+        el('pollSaturation').textContent = pollSaturation.text;
+        el('pollSaturation').className = pollSaturation.className;
         if (document.activeElement !== el('cfgUpdateRate')) el('cfgUpdateRate').value = updateRateMs;
         el('mappingCount').textContent = (get(b, 'mappingCount') ?? 0) + ' tags';
         el('uaEndpoint').textContent = get(ua, 'endpointUrl') || '—';
@@ -605,13 +770,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     el('btnBrowseAllTags').addEventListener('click', () => browseTags('', true).catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
     el('manualAdd').addEventListener('click', () => addManual().catch(e => alert('Add failed: ' + e.message)));
     el('toggleLiveValues').addEventListener('click', toggleLiveValues);
+    el('btnRefreshLogs').addEventListener('click', () => loadLogs(true).catch(e => el('logMessage').textContent = '✗ ' + e.message));
+    el('logLevel').addEventListener('change', () => {
+        state.logsLoaded = false;
+        loadLogs(true).catch(e => el('logMessage').textContent = '✗ ' + e.message);
+    });
     bindDynamicButtons();
     const initTab = location.hash.slice(1);
-    if (['monitor','connection','tags'].includes(initTab)) showTab(initTab);
+    if (['monitor','connection','tags','logs','help','about'].includes(initTab)) showTab(initTab);
     await loadSources();
     await loadMappings();
     updateLiveValuesUi();
     await refresh();
+    if (initTab === 'logs') await loadLogs();
+    if (initTab === 'about') await loadAppInfo();
     setInterval(refresh, 1000);
 });
 </script>
