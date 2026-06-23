@@ -11,6 +11,7 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
     private readonly Dictionary<string, BaseDataVariableState> variables_by_mapping_key_ = new(StringComparer.OrdinalIgnoreCase);
     private FolderState? root_folder_;
     private ushort namespace_index_;
+    private DateTime? last_value_update_utc_;
 
     public BridgeNodeManager(
         IServerInternal server,
@@ -90,6 +91,22 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
         }
     }
 
+    public int GetMappedNodeCount()
+    {
+        lock (Lock)
+        {
+            return variables_by_mapping_key_.Count;
+        }
+    }
+
+    public DateTime? GetLastValueUpdateUtc()
+    {
+        lock (Lock)
+        {
+            return last_value_update_utc_;
+        }
+    }
+
     public void UpdateValue(BridgeValue value)
     {
         lock (Lock)
@@ -103,6 +120,7 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
             variable.Timestamp = value.TimestampUtc;
             variable.StatusCode = value.IsGood ? StatusCodes.Good : StatusCodes.Bad;
             variable.ClearChangeMasks(SystemContext, false);
+            last_value_update_utc_ = DateTime.UtcNow;
         }
     }
 

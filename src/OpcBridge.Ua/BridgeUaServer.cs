@@ -54,10 +54,26 @@ internal sealed class BridgeUaServer : StandardServer
 
     public int GetConnectedSessionCount()
     {
-        return ServerInternal.SessionManager
+        ISessionManager? sessionManager = ServerInternal?.SessionManager;
+        if (sessionManager is null)
+        {
+            return 0;
+        }
+
+        return sessionManager
             .GetSessions()
             .Cast<ISession>()
             .Count(session => session.Activated && !session.HasExpired);
+    }
+
+    public int GetMappedNodeCount()
+    {
+        return node_manager_?.GetMappedNodeCount() ?? 0;
+    }
+
+    public DateTime? GetLastValueUpdateUtc()
+    {
+        return node_manager_?.GetLastValueUpdateUtc();
     }
 
     protected override MasterNodeManager CreateMasterNodeManager(

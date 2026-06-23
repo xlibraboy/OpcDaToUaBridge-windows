@@ -64,7 +64,9 @@ public sealed class UaServerHost : IAsyncDisposable
         return new UaServerStatus(
             server is not null ? "Running" : "Stopped",
             options_.EndpointUrl,
-            server?.GetConnectedSessionCount() ?? 0);
+            server?.GetConnectedSessionCount() ?? 0,
+            server?.GetMappedNodeCount() ?? 0,
+            server?.GetLastValueUpdateUtc());
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
@@ -170,4 +172,6 @@ public sealed class UaServerHost : IAsyncDisposable
 public sealed record UaServerStatus(
     string State,
     string EndpointUrl,
-    int ConnectedClientCount);
+    int ConnectedClientCount,
+    int MappedNodeCount,
+    DateTime? LastValueUpdateUtc);

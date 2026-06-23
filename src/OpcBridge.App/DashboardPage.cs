@@ -59,9 +59,13 @@ internal static class DashboardPage
         .badge.warn { color: var(--warn); background: rgba(251,191,36,.12); }
         .badge.partial { color: var(--accent); background: rgba(56,189,248,.12); }
         table { width: 100%; border-collapse: collapse; }
-        th { background: var(--panel2); color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
-        td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
-        tr:last-child td { border-bottom: none; }
+        .values-wrap { overflow-x: auto; }
+        .values-table { table-layout: fixed; }
+        .values-table th { padding: 7px 10px; font-size: 10px; }
+        .values-table td { padding: 7px 10px; font-size: 12px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+        .values-table code, .values-table .mono { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+        .values-table .quality { display: inline-flex; align-items: center; gap: 6px; }
+        .values-table .timestamp { color: var(--muted); font-size: 11px; }
         .field { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
         .field:last-child { margin-bottom: 0; }
         label.fl { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; width: 86px; flex-shrink: 0; }
@@ -118,15 +122,20 @@ internal static class DashboardPage
         </div>
         <div class="box">
             <div class="box-h">OPC UA Endpoint</div>
-            <div class="box-b"><div class="endpoint" id="uaEndpoint">&#8212;</div></div>
+            <div class="box-b"><div class="endpoint" id="uaEndpoint">&#8212;</div><div class="msg" id="uaDiagnostics" style="margin-top:8px">0 nodes · no updates yet</div></div>
         </div>
     </div>
     <div class="box">
-        <div class="box-h">Live Values <span class="msg" id="valCount" style="margin-left:auto"></span></div>
-        <table>
-            <thead><tr><th>Source</th><th>DA Item ID</th><th>Value</th><th>Quality</th><th>Timestamp</th></tr></thead>
-            <tbody id="values"><tr><td colspan="5" class="msg">Waiting for values&#8230;</td></tr></tbody>
-        </table>
+            <div class="box-h">DA Live Values <span class="msg" id="valCount" style="margin-left:auto"></span><button class="btn ghost" id="toggleLiveValues" type="button">Disable Live Data</button></div>
+        <div class="box-b" style="padding:0">
+            <div class="values-wrap">
+                <table class="values-table">
+                    <colgroup><col style="width:14%"><col style="width:29%"><col style="width:27%"><col style="width:14%"><col style="width:16%"></colgroup>
+                    <thead><tr><th>Source</th><th>DA Item ID</th><th>Value</th><th>Quality</th><th>Timestamp</th></tr></thead>
+                    <tbody id="values"><tr><td colspan="5" class="msg">Waiting for values&#8230;</td></tr></tbody>
+                </table>
+            </div>
+        </div>
     </div>
 </div>
 <div class="view" id="view-connection">
@@ -178,16 +187,16 @@ internal static class DashboardPage
             </div>
         </div>
         <div class="box">
-            <div class="box-h">Mapped Tags <span class="msg" id="mapCount" style="margin-left:auto"></span></div>
+            <div class="box-h">DA → OPC UA Mappings <span class="msg" id="mapCount" style="margin-left:auto"></span></div>
             <div class="box-b">
                 <div class="field">
-                    <label class="fl">Active Source</label>
+                    <label class="fl">DA Source</label>
                     <select id="mapSourceSelect"></select>
                 </div>
                 <div class="field" style="margin-bottom:8px">
-                    <input id="manualItem" type="text" placeholder="Manual DA Item ID" style="flex:1">
-                    <input id="manualUaNodeId" type="text" placeholder="UA NodeId (optional)" style="flex:1">
-                    <button class="btn ghost" type="button" id="manualAdd">Add</button>
+                    <input id="manualItem" type="text" placeholder="DA Item ID" style="flex:1">
+                    <input id="manualUaNodeId" type="text" placeholder="OPC UA NodeId (optional)" style="flex:1">
+                    <button class="btn ghost" type="button" id="manualAdd">Add Mapping</button>
                 </div>
                 <div class="list" id="mappedList"></div>
             </div>
@@ -206,7 +215,9 @@ const state = {
     tagPath: '',
     sources: [],
     selectedSourceId: 'default',
-    editingNewSource: false
+    editingNewSource: false,
+    liveValuesEnabled: true,
+    lastValueCount: 0
 };
 
 function showTab(name) {
@@ -230,6 +241,10 @@ function relTime(u) {
     if (d < 60) return d + 's ago';
     if (d < 3600) return Math.floor(d / 60) + 'm ago';
     return new Date(u).toLocaleTimeString();
+}
+function shortTime(u) {
+    if (!u) return '—';
+    return new Date(u).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 function locTime(u) { return u ? new Date(u).toLocaleString() : '—'; }
 function get(o, k) { return o?.[k] ?? o?.[k[0].toUpperCase() + k.slice(1)]; }
@@ -271,6 +286,17 @@ async function loadSources() {
     state.sources = payload.sources || [];
     renderSources();
 }
+function updateLiveValuesUi() {
+    el('toggleLiveValues').textContent = state.liveValuesEnabled ? 'Disable Live Data' : 'Enable Live Data';
+    el('valCount').textContent = state.lastValueCount + ' values' + (state.liveValuesEnabled ? '' : ' · paused');
+}
+
+function formatUaDiagnostics(ua) {
+    const nodeCount = get(ua, 'mappedNodeCount') ?? 0;
+    const lastUpdateUtc = get(ua, 'lastValueUpdateUtc');
+    return nodeCount + ' nodes · last node update ' + (lastUpdateUtc ? relTime(lastUpdateUtc) : 'never');
+}
+
 async function refresh() {
     try {
         const p = await (await fetch('/api/dashboard', { cache: 'no-store' })).json();
@@ -298,32 +324,43 @@ async function refresh() {
         el('updateRate').textContent = (get(b, 'updateRateMs') || '—') + ' ms';
         el('mappingCount').textContent = (get(b, 'mappingCount') ?? 0) + ' tags';
         el('uaEndpoint').textContent = get(ua, 'endpointUrl') || '—';
+        el('uaDiagnostics').textContent = formatUaDiagnostics(ua);
         el('sourceStatusList').innerHTML = sources.length ? sources.map(source =>
             `<div class="li"><div style="flex:1"><div class="n">${esc(get(source,'displayName') || get(source,'sourceId'))}</div><div class="p">${esc(get(source,'sourceId'))} · ${esc(get(source,'host') || '')} · ${esc(get(source,'progId') || '')}</div></div><div>${badge(get(source,'connectionState') || '—', stateClass(get(source,'connectionState')))}</div></div>`
         ).join('') : '<span class="msg">No source status yet.</span>';
-        el('valCount').textContent = vs.length + ' values';
-        el('values').innerHTML = vs.length ? vs.map(it => {
-            const g = get(it, 'isGood');
-            const q = get(it, 'daQuality');
-            return `<tr><td><code>${esc(get(it,'sourceId'))}</code></td><td><code>${esc(get(it,'daItemId'))}</code></td><td class="mono">${esc(String(get(it,'value') ?? ''))}</td><td>${badge(g ? 'Good' : 'Bad', g ? 'good' : 'bad')} <span class="${g ? 'good' : 'bad'}">(${q})</span></td><td class="msg">${esc(locTime(get(it,'timestampUtc')))}</td></tr>`;
-        }).join('') : '<tr><td colspan="5" class="msg">No values yet.</td></tr>';
+        state.lastValueCount = vs.length;
+        updateLiveValuesUi();
+        if (state.liveValuesEnabled) {
+            el('values').innerHTML = vs.length ? vs.map(it => {
+                const g = get(it, 'isGood');
+                const q = get(it, 'daQuality');
+                const sourceId = get(it, 'sourceId');
+                const itemId = get(it, 'daItemId');
+                const value = String(get(it, 'value') ?? '');
+                const timestamp = locTime(get(it, 'timestampUtc'));
+                const timestampShort = shortTime(get(it, 'timestampUtc'));
+                return `<tr><td><code title="${attr(sourceId)}">${esc(sourceId)}</code></td><td><code title="${attr(itemId)}">${esc(itemId)}</code></td><td class="mono" title="${attr(value)}">${esc(value)}</td><td title="${attr(String(q ?? ''))}"><span class="quality">${badge(g ? 'Good' : 'Bad', g ? 'good' : 'bad')} <span class="${g ? 'good' : 'bad'}">(${q})</span></span></td><td class="msg timestamp" title="${attr(timestamp)}">${esc(timestampShort)}</td></tr>`;
+            }).join('') : '<tr><td colspan="5" class="msg">No values yet.</td></tr>';
+        }
     } catch (e) {
         el('dot').className = 'dot off';
         el('clock').textContent = 'offline';
-        el('values').innerHTML = `<tr><td colspan="5" class="bad">${esc(e.message)}</td></tr>`;
+        if (state.liveValuesEnabled) {
+            el('values').innerHTML = `<tr><td colspan="5" class="bad">${esc(e.message)}</td></tr>`;
+        }
     }
 }
 async function loadMappings() {
     const p = await (await fetch('/api/mappings', { cache: 'no-store' })).json();
     const mappings = p.mappings || [];
-    el('mapCount').textContent = mappings.length + ' tags';
+    el('mapCount').textContent = mappings.length + ' mappings';
     el('mappedList').innerHTML = mappings.length ? mappings.map(t => {
         const sourceId = t.sourceId || t.SourceId || 'default';
         const item = t.daItemId || t.DaItemId;
         const name = t.displayName || t.DisplayName || item;
         const node = t.uaNodeId || t.UaNodeId || defaultUaNodeId(sourceId, item);
         return `<div class="li"><div style="flex:1"><div class="n">${esc(name)}</div><div class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</div></div><button class="btn ghost" data-action="remove-mapping" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">Remove</button></div>`;
-    }).join('') : '<span class="msg">No mapped tags.</span>';
+    }).join('') : '<span class="msg">No DA → OPC UA mappings.</span>';
 }
 
 function pickSource(sourceId) {
@@ -361,7 +398,7 @@ async function saveSource() {
 async function removeSelectedSource() {
     const source = currentSource();
     if (!source || state.editingNewSource) return;
-    if (!confirm('Remove source "' + source.sourceId + '" and its mapped tags?')) return;
+    if (!confirm('Remove source "' + source.sourceId + '" and its DA → OPC UA mappings?')) return;
     const r = await fetch('/api/da/sources/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sourceId: source.sourceId }) });
     const p = await r.json();
     if (!r.ok) throw new Error(p.error || ('HTTP ' + r.status));
@@ -478,6 +515,18 @@ async function removeMapping(sourceId, itemId) {
     await loadMappings();
     await refresh();
 }
+function toggleLiveValues() {
+    state.liveValuesEnabled = !state.liveValuesEnabled;
+    updateLiveValuesUi();
+    if (state.liveValuesEnabled) {
+        refresh().catch(e => {
+            el('dot').className = 'dot off';
+            el('clock').textContent = 'offline';
+            el('values').innerHTML = `<tr><td colspan="5" class="bad">${esc(e.message)}</td></tr>`;
+        });
+    }
+}
+
 function bindDynamicButtons() {
     el('sourcesList').addEventListener('click', event => {
         const button = event.target.closest('button[data-action="select-source"]');
@@ -517,11 +566,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     el('btnBrowseTags').addEventListener('click', () => browseTags('').catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
     el('btnBrowseAllTags').addEventListener('click', () => browseTags('', true).catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
     el('manualAdd').addEventListener('click', () => addManual().catch(e => alert('Add failed: ' + e.message)));
+    el('toggleLiveValues').addEventListener('click', toggleLiveValues);
     bindDynamicButtons();
     const initTab = location.hash.slice(1);
     if (['monitor','connection','tags'].includes(initTab)) showTab(initTab);
     await loadSources();
     await loadMappings();
+    updateLiveValuesUi();
     await refresh();
     setInterval(refresh, 1000);
 });
