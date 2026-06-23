@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using OpcBridge.Core;
@@ -8,6 +9,8 @@ namespace OpcBridge.App;
 
 public sealed class BridgeWorker : BackgroundService
 {
+    private const int MaxConcurrentSourcePolls = 8;
+
     private readonly UaServerHost ua_server_;
     private readonly BridgeState bridge_state_;
     private readonly MappingStore mapping_store_;
@@ -35,6 +38,7 @@ public sealed class BridgeWorker : BackgroundService
     {
         DaRuntimeSettingsSnapshot settings = da_settings_.GetSnapshot();
         (IReadOnlyList<TagMapping> mappings, long mappingVersion) = mapping_store_.GetSnapshot();
+        SourceMappingCache sourceMappingCache = SourceMappingCache.Build(mappings);
         bridge_state_.Configure(settings.UpdateRateMs, mappings.Count, settings.Sources);
 
         try
@@ -57,6 +61,7 @@ public sealed class BridgeWorker : BackgroundService
                     {
                         if (mappingVersion != uaMappingVersion)
                         {
+                            sourceMappingCache = SourceMappingCache.Build(mappings);
                             ua_server_.SyncMappings(mappings);
                             bridge_state_.RetainMappedValues(mappings);
                             uaMappingVersion = mappingVersion;
@@ -72,57 +77,24 @@ public sealed class BridgeWorker : BackgroundService
                             bridge_state_.UpdateSources(settings.UpdateRateMs, mappings.Count, settings.Sources);
                         }
 
-                        int totalValueCount = 0;
-                        bool anySuccess = false;
+                        Stopwatch cycleTimer = Stopwatch.StartNew();
+                        SourcePollSummary pollSummary = await PollSourcesAsync(
+                            settings,
+                            sessions,
+                            sourceMappingCache,
+                            stoppingToken).ConfigureAwait(false);
+                        cycleTimer.Stop();
 
-                        for (int i = 0; i < settings.Sources.Count; i++)
+                        if (pollSummary.FailedSourceIds.Count > 0)
                         {
-                            DaSourceRuntimeSettings source = settings.Sources[i];
-                            IReadOnlyList<TagMapping> sourceMappings = mappings
-                                .Where(mapping => string.Equals(mapping.SourceId, source.SourceId, StringComparison.OrdinalIgnoreCase))
-                                .ToArray();
-
-                            if (!sessions.TryGetValue(source.SourceId, out SourceSession? session))
-                            {
-                                continue;
-                            }
-
-                            try
-                            {
-                                bridge_state_.SetSourceConnectionState(source.SourceId, "Connected");
-                                IReadOnlyList<BridgeValue> values = await session.Client
-                                    .ReadAsync(sourceMappings, stoppingToken)
-                                    .ConfigureAwait(false);
-
-                                bridge_state_.UpdateDaRead(source.SourceId, values);
-                                for (int valueIndex = 0; valueIndex < values.Count; valueIndex++)
-                                {
-                                    ua_server_.UpdateValue(values[valueIndex]);
-                                }
-
-                                totalValueCount += values.Count;
-                                anySuccess = true;
-                            }
-                            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                            {
-                                throw;
-                            }
-                            catch (Exception exception)
-                            {
-                                bridge_state_.SetSourceError(source.SourceId, exception);
-                                bridge_state_.ClearSourceValues(source.SourceId);
-                                logger_.LogWarning(exception, "Source {SourceId} read failed", source.SourceId);
-
-                                await session.Client.DisposeAsync().ConfigureAwait(false);
-                                sessions.Remove(source.SourceId);
-                                connectedVersion = -1;
-                            }
+                            await DisposeFailedSessionsAsync(sessions, pollSummary.FailedSourceIds).ConfigureAwait(false);
+                            connectedVersion = -1;
                         }
 
-                        if (anySuccess)
+                        if (pollSummary.AnySuccess)
                         {
                             bridge_state_.SetBridgeState("Running");
-                            bridge_state_.MarkUaWrite(totalValueCount);
+                            bridge_state_.MarkUaWrite(pollSummary.TotalValueCount, cycleTimer.Elapsed);
                         }
 
                         await Task.Delay(settings.UpdateRateMs, stoppingToken).ConfigureAwait(false);
@@ -160,6 +132,74 @@ public sealed class BridgeWorker : BackgroundService
         await base.StopAsync(cancellationToken).ConfigureAwait(false);
         bridge_state_.SetDaConnectionState("Disconnected");
         bridge_state_.SetBridgeState("Stopped");
+    }
+
+    private async Task<SourcePollSummary> PollSourcesAsync(
+        DaRuntimeSettingsSnapshot settings,
+        Dictionary<string, SourceSession> sessions,
+        SourceMappingCache sourceMappingCache,
+        CancellationToken cancellationToken)
+    {
+        using SemaphoreSlim concurrencyGate = new(MaxConcurrentSourcePolls);
+        List<Task<SourcePollResult>> pollTasks = new(settings.Sources.Count);
+
+        for (int i = 0; i < settings.Sources.Count; i++)
+        {
+            DaSourceRuntimeSettings source = settings.Sources[i];
+            if (!sessions.TryGetValue(source.SourceId, out SourceSession? session))
+            {
+                continue;
+            }
+
+            IReadOnlyList<TagMapping> sourceMappings = sourceMappingCache.GetMappings(source.SourceId);
+            pollTasks.Add(PollSourceAsync(source, session, sourceMappings, concurrencyGate, cancellationToken));
+        }
+
+        SourcePollResult[] results = await Task.WhenAll(pollTasks).ConfigureAwait(false);
+        return SourcePollSummary.FromResults(results);
+    }
+
+    private async Task<SourcePollResult> PollSourceAsync(
+        DaSourceRuntimeSettings source,
+        SourceSession session,
+        IReadOnlyList<TagMapping> sourceMappings,
+        SemaphoreSlim concurrencyGate,
+        CancellationToken cancellationToken)
+    {
+        await concurrencyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            bridge_state_.SetSourceConnectionState(source.SourceId, "Connected");
+            Stopwatch readTimer = Stopwatch.StartNew();
+            IReadOnlyList<BridgeValue> values = await Task
+                .Run(async () => await session.Client.ReadAsync(sourceMappings, cancellationToken).ConfigureAwait(false), cancellationToken)
+                .ConfigureAwait(false);
+
+            readTimer.Stop();
+            bridge_state_.UpdateDaRead(source.SourceId, values, readTimer.Elapsed);
+            for (int valueIndex = 0; valueIndex < values.Count; valueIndex++)
+            {
+                ua_server_.UpdateValue(values[valueIndex]);
+            }
+
+            return SourcePollResult.Success(source.SourceId, values.Count);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            bridge_state_.SetSourceError(source.SourceId, exception);
+            bridge_state_.ClearSourceValues(source.SourceId);
+            logger_.LogWarning(exception, "Source {SourceId} read failed", source.SourceId);
+            return SourcePollResult.Failure(source.SourceId);
+        }
+        finally
+        {
+            concurrencyGate.Release();
+        }
     }
 
     private async Task ReconfigureSessionsAsync(
@@ -200,11 +240,108 @@ public sealed class BridgeWorker : BackgroundService
         }
     }
 
+    private static async Task DisposeFailedSessionsAsync(
+        Dictionary<string, SourceSession> sessions,
+        IReadOnlyList<string> failedSourceIds)
+    {
+        for (int i = 0; i < failedSourceIds.Count; i++)
+        {
+            if (!sessions.Remove(failedSourceIds[i], out SourceSession? session))
+            {
+                continue;
+            }
+
+            await session.Client.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
     private static async Task DisposeSessionsAsync(Dictionary<string, SourceSession> sessions)
     {
         foreach (SourceSession session in sessions.Values)
         {
             await session.Client.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private sealed class SourceMappingCache
+    {
+        private static readonly IReadOnlyList<TagMapping> EmptyMappings = Array.Empty<TagMapping>();
+        private readonly Dictionary<string, IReadOnlyList<TagMapping>> mappings_by_source_;
+
+        private SourceMappingCache(Dictionary<string, IReadOnlyList<TagMapping>> mappingsBySource)
+        {
+            mappings_by_source_ = mappingsBySource;
+        }
+
+        public static SourceMappingCache Build(IReadOnlyList<TagMapping> mappings)
+        {
+            Dictionary<string, List<TagMapping>> groupedMappings = new(StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < mappings.Count; i++)
+            {
+                TagMapping mapping = mappings[i];
+                if (!groupedMappings.TryGetValue(mapping.SourceId, out List<TagMapping>? sourceMappings))
+                {
+                    sourceMappings = new List<TagMapping>();
+                    groupedMappings[mapping.SourceId] = sourceMappings;
+                }
+
+                sourceMappings.Add(mapping);
+            }
+
+            Dictionary<string, IReadOnlyList<TagMapping>> frozenMappings = new(StringComparer.OrdinalIgnoreCase);
+            foreach ((string sourceId, List<TagMapping> sourceMappings) in groupedMappings)
+            {
+                frozenMappings[sourceId] = sourceMappings.ToArray();
+            }
+
+            return new SourceMappingCache(frozenMappings);
+        }
+
+        public IReadOnlyList<TagMapping> GetMappings(string sourceId)
+        {
+            return mappings_by_source_.TryGetValue(sourceId, out IReadOnlyList<TagMapping>? mappings)
+                ? mappings
+                : EmptyMappings;
+        }
+    }
+
+    private sealed record SourcePollResult(string SourceId, bool IsSuccess, int ValueCount)
+    {
+        public static SourcePollResult Success(string sourceId, int valueCount)
+        {
+            return new SourcePollResult(sourceId, true, valueCount);
+        }
+
+        public static SourcePollResult Failure(string sourceId)
+        {
+            return new SourcePollResult(sourceId, false, 0);
+        }
+    }
+
+    private sealed record SourcePollSummary(int TotalValueCount, bool AnySuccess, IReadOnlyList<string> FailedSourceIds)
+    {
+        public static SourcePollSummary FromResults(IReadOnlyList<SourcePollResult> results)
+        {
+            int totalValueCount = 0;
+            bool anySuccess = false;
+            List<string> failedSourceIds = new();
+
+            for (int i = 0; i < results.Count; i++)
+            {
+                SourcePollResult result = results[i];
+                if (result.IsSuccess)
+                {
+                    totalValueCount += result.ValueCount;
+                    anySuccess = true;
+                }
+                else
+                {
+                    failedSourceIds.Add(result.SourceId);
+                }
+            }
+
+            return new SourcePollSummary(totalValueCount, anySuccess, failedSourceIds);
         }
     }
 

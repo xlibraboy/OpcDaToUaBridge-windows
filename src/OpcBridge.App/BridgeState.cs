@@ -20,6 +20,7 @@ public sealed class BridgeState
                 "Disconnected",
                 null,
                 null,
+                0,
                 0))
             .ToArray();
 
@@ -35,6 +36,8 @@ public sealed class BridgeState
                 LastDaReadCount = 0,
                 LastUaWriteUtc = null,
                 LastUaWriteCount = 0,
+                LastPollDurationMs = 0,
+                LastPollValueRate = 0,
                 LastError = null,
                 Sources = sourceStatuses
             };
@@ -61,6 +64,7 @@ public sealed class BridgeState
                         "Disconnected",
                         null,
                         null,
+                        0,
                         0);
                 }
                 else
@@ -188,7 +192,7 @@ public sealed class BridgeState
         }
     }
 
-    public void UpdateDaRead(string sourceId, IReadOnlyList<BridgeValue> values)
+    public void UpdateDaRead(string sourceId, IReadOnlyList<BridgeValue> values, TimeSpan readDuration)
     {
         DateTime readTime = DateTime.UtcNow;
 
@@ -213,6 +217,7 @@ public sealed class BridgeState
                         ConnectionState = "Connected",
                         LastDaReadUtc = readTime,
                         LastDaReadCount = values.Count,
+                        LastDaReadDurationMs = ToMilliseconds(readDuration),
                         LastError = null
                     }
                     : source)
@@ -230,14 +235,17 @@ public sealed class BridgeState
         }
     }
 
-    public void MarkUaWrite(int valueCount)
+    public void MarkUaWrite(int valueCount, TimeSpan pollDuration)
     {
         lock (status_lock_)
         {
+            double durationMs = ToMilliseconds(pollDuration);
             status_ = status_ with
             {
                 LastUaWriteUtc = DateTime.UtcNow,
-                LastUaWriteCount = valueCount
+                LastUaWriteCount = valueCount,
+                LastPollDurationMs = durationMs,
+                LastPollValueRate = CalculateValueRate(valueCount, pollDuration)
             };
         }
     }
@@ -299,6 +307,16 @@ public sealed class BridgeState
         return "Disconnected";
     }
 
+    private static double ToMilliseconds(TimeSpan duration)
+    {
+        return Math.Round(duration.TotalMilliseconds, 1);
+    }
+
+    private static double CalculateValueRate(int valueCount, TimeSpan duration)
+    {
+        return duration.TotalSeconds <= 0 ? 0 : Math.Round(valueCount / duration.TotalSeconds, 1);
+    }
+
     private static string NormalizeKey(string sourceId, string daItemId)
     {
         return string.Concat(sourceId.Trim(), "::", daItemId.Trim());
@@ -314,6 +332,8 @@ public sealed record BridgeRuntimeStatus(
     int LastDaReadCount,
     DateTime? LastUaWriteUtc,
     int LastUaWriteCount,
+    double LastPollDurationMs,
+    double LastPollValueRate,
     string? LastError,
     IReadOnlyList<DaSourceStatusSnapshot> Sources)
 {
@@ -325,6 +345,8 @@ public sealed record BridgeRuntimeStatus(
         null,
         0,
         null,
+        0,
+        0,
         0,
         null,
         Array.Empty<DaSourceStatusSnapshot>());
@@ -338,7 +360,8 @@ public sealed record DaSourceStatusSnapshot(
     string ConnectionState,
     DateTime? LastDaReadUtc,
     string? LastError,
-    int LastDaReadCount);
+    int LastDaReadCount,
+    double LastDaReadDurationMs);
 
 public sealed record BridgeValueSnapshot(
     string SourceId,

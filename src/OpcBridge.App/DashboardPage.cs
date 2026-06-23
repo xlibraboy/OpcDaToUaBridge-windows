@@ -291,6 +291,16 @@ function updateLiveValuesUi() {
     el('valCount').textContent = state.lastValueCount + ' values' + (state.liveValuesEnabled ? '' : ' · paused');
 }
 
+function formatMs(value) {
+    const n = Number(value ?? 0);
+    return n > 0 ? n.toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' ms' : '—';
+}
+
+function formatRate(value) {
+    const n = Number(value ?? 0);
+    return n > 0 ? n.toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' values/s' : '0 values/s';
+}
+
 function formatUaDiagnostics(ua) {
     const nodeCount = get(ua, 'mappedNodeCount') ?? 0;
     const lastUpdateUtc = get(ua, 'lastValueUpdateUtc');
@@ -318,7 +328,7 @@ async function refresh() {
         el('lastDaRead').textContent = relTime(get(b, 'lastDaReadUtc'));
         el('lastDaReadCount').textContent = (get(b, 'lastDaReadCount') ?? 0) + ' values';
         el('lastUaWrite').textContent = relTime(get(b, 'lastUaWriteUtc'));
-        el('lastUaWriteCount').textContent = (get(b, 'lastUaWriteCount') ?? 0) + ' values';
+        el('lastUaWriteCount').textContent = (get(b, 'lastUaWriteCount') ?? 0) + ' values · ' + formatMs(get(b, 'lastPollDurationMs')) + ' · ' + formatRate(get(b, 'lastPollValueRate'));
         el('uaState').innerHTML = badge(get(ua, 'state') || '—', stateClass(get(ua, 'state')));
         el('uaClients').textContent = (get(ua, 'connectedClientCount') ?? 0) + ' clients';
         el('updateRate').textContent = (get(b, 'updateRateMs') || '—') + ' ms';
@@ -326,7 +336,7 @@ async function refresh() {
         el('uaEndpoint').textContent = get(ua, 'endpointUrl') || '—';
         el('uaDiagnostics').textContent = formatUaDiagnostics(ua);
         el('sourceStatusList').innerHTML = sources.length ? sources.map(source =>
-            `<div class="li"><div style="flex:1"><div class="n">${esc(get(source,'displayName') || get(source,'sourceId'))}</div><div class="p">${esc(get(source,'sourceId'))} · ${esc(get(source,'host') || '')} · ${esc(get(source,'progId') || '')}</div></div><div>${badge(get(source,'connectionState') || '—', stateClass(get(source,'connectionState')))}</div></div>`
+            `<div class="li"><div style="flex:1"><div class="n">${esc(get(source,'displayName') || get(source,'sourceId'))}</div><div class="p">${esc(get(source,'sourceId'))} · ${esc(get(source,'host') || '')} · ${esc(get(source,'progId') || '')} · ${(get(source,'lastDaReadCount') ?? 0)} values in ${formatMs(get(source,'lastDaReadDurationMs'))}</div></div><div>${badge(get(source,'connectionState') || '—', stateClass(get(source,'connectionState')))}</div></div>`
         ).join('') : '<span class="msg">No source status yet.</span>';
         state.lastValueCount = vs.length;
         updateLiveValuesUi();
