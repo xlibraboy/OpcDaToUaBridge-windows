@@ -148,12 +148,14 @@ internal static class DashboardPage
             <div class="field"><label class="fl">ProgID</label><input id="cfgProgId" type="text" placeholder="ProgID" style="flex:1"></div>
             <div class="field"><label class="fl">Host</label><input id="cfgHost" type="text" placeholder="localhost" style="flex:1"></div>
             <div class="field"><label class="fl">User</label><input id="cfgUser" type="text" placeholder="username" style="width:130px"><input id="cfgPass" type="password" placeholder="password" style="width:120px"><input id="cfgDomain" type="text" placeholder="domain" style="width:110px"></div>
+            <div class="field"><label class="fl">Update Rate</label><input id="cfgUpdateRate" type="text" inputmode="numeric" placeholder="1000" style="width:130px"><button class="btn ghost" id="cfgApplyRate" type="button">Apply Rate</button><span class="msg">Minimum 100 ms</span></div>
             <div class="toolbar">
                 <button class="btn" id="cfgApply" type="button">Save Source</button>
                 <button class="btn ghost" id="cfgNew" type="button">New Source</button>
                 <button class="btn ghost" id="cfgRemove" type="button">Remove Source</button>
             </div>
             <div class="msg" id="cfgMessage">Select a source.</div>
+            <div class="msg" id="rateMessage">Bridge rate applies live to all DA sources.</div>
         </div>
     </div>
     <div class="grid2" style="margin-top:14px">
@@ -217,7 +219,8 @@ const state = {
     selectedSourceId: 'default',
     editingNewSource: false,
     liveValuesEnabled: true,
-    lastValueCount: 0
+    lastValueCount: 0,
+    updateRateMs: 1000
 };
 
 function showTab(name) {
@@ -284,6 +287,8 @@ function loadSelectedSourceForm() {
 async function loadSources() {
     const payload = await (await fetch('/api/da/sources', { cache: 'no-store' })).json();
     state.sources = payload.sources || [];
+    state.updateRateMs = Number(payload.updateRateMs || state.updateRateMs || 1000);
+    if (document.activeElement !== el('cfgUpdateRate')) el('cfgUpdateRate').value = state.updateRateMs;
     renderSources();
 }
 function updateLiveValuesUi() {
@@ -331,7 +336,10 @@ async function refresh() {
         el('lastUaWriteCount').textContent = (get(b, 'lastUaWriteCount') ?? 0) + ' values · ' + formatMs(get(b, 'lastPollDurationMs')) + ' · ' + formatRate(get(b, 'lastPollValueRate'));
         el('uaState').innerHTML = badge(get(ua, 'state') || '—', stateClass(get(ua, 'state')));
         el('uaClients').textContent = (get(ua, 'connectedClientCount') ?? 0) + ' clients';
-        el('updateRate').textContent = (get(b, 'updateRateMs') || '—') + ' ms';
+        const updateRateMs = Number(get(b, 'updateRateMs') || state.updateRateMs || 1000);
+        state.updateRateMs = updateRateMs;
+        el('updateRate').textContent = updateRateMs + ' ms';
+        if (document.activeElement !== el('cfgUpdateRate')) el('cfgUpdateRate').value = updateRateMs;
         el('mappingCount').textContent = (get(b, 'mappingCount') ?? 0) + ' tags';
         el('uaEndpoint').textContent = get(ua, 'endpointUrl') || '—';
         el('uaDiagnostics').textContent = formatUaDiagnostics(ua);
@@ -404,6 +412,25 @@ async function saveSource() {
     await loadSources();
     await refresh();
     el('cfgMessage').textContent = 'Source saved.';
+}
+async function saveUpdateRate() {
+    const updateRateMs = Number.parseInt(el('cfgUpdateRate').value.trim(), 10);
+    if (!Number.isFinite(updateRateMs) || updateRateMs <= 0) {
+        el('rateMessage').textContent = '✗ Enter an update rate in milliseconds.';
+        return;
+    }
+
+    const r = await fetch('/api/da/update-rate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updateRateMs })
+    });
+    const p = await r.json();
+    if (!r.ok) throw new Error(p.error || ('HTTP ' + r.status));
+    state.updateRateMs = Number(p.updateRateMs || updateRateMs);
+    el('cfgUpdateRate').value = state.updateRateMs;
+    await refresh();
+    el('rateMessage').textContent = 'Update rate applied: ' + state.updateRateMs + ' ms.';
 }
 async function removeSelectedSource() {
     const source = currentSource();
@@ -572,6 +599,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     el('cfgApply').addEventListener('click', () => saveSource().catch(e => el('cfgMessage').textContent = '✗ ' + e.message));
     el('cfgNew').addEventListener('click', newSource);
     el('cfgRemove').addEventListener('click', () => removeSelectedSource().catch(e => el('cfgMessage').textContent = '✗ ' + e.message));
+    el('cfgApplyRate').addEventListener('click', () => saveUpdateRate().catch(e => el('rateMessage').textContent = '✗ ' + e.message));
     el('btnReloadServers').addEventListener('click', () => browseServers().catch(e => el('msgServers').textContent = e.message));
     el('btnBrowseTags').addEventListener('click', () => browseTags('').catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
     el('btnBrowseAllTags').addEventListener('click', () => browseTags('', true).catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));

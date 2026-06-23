@@ -55,6 +55,20 @@ app.MapGet("/api/da/sources", (DaRuntimeSettings settings) =>
         })
     });
 });
+app.MapPost("/api/da/update-rate", (DaUpdateRateRequest request, DaRuntimeSettings settings) =>
+{
+    if (request.UpdateRateMs <= 0)
+    {
+        return Results.BadRequest(new { error = "Update rate must be greater than 0 ms." });
+    }
+
+    DaRuntimeSettingsSnapshot snapshot = settings.SetUpdateRate(request.UpdateRateMs);
+    return Results.Json(new
+    {
+        version = snapshot.Version,
+        updateRateMs = snapshot.UpdateRateMs
+    });
+});
 app.MapPost("/api/da/sources", (DaServerConfigRequest request, DaRuntimeSettings settings) =>
 {
     if (string.IsNullOrWhiteSpace(request.SourceId))

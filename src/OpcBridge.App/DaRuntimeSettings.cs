@@ -87,6 +87,22 @@ public sealed class DaRuntimeSettings
             return true;
         }
     }
+    public DaRuntimeSettingsSnapshot SetUpdateRate(int updateRateMs)
+    {
+        int normalizedUpdateRate = NormalizeUpdateRate(updateRateMs);
+
+        lock (sync_)
+        {
+            snapshot_ = snapshot_ with
+            {
+                UpdateRateMs = normalizedUpdateRate,
+                Version = snapshot_.Version + 1
+            };
+
+            return snapshot_;
+        }
+    }
+
 
     public DaRuntimeSettingsSnapshot SetServerConfig(
         string progId,
@@ -178,7 +194,12 @@ public sealed class DaRuntimeSettings
 
     private static int NormalizeUpdateRate(int updateRateMs)
     {
-        return updateRateMs <= 0 ? 1000 : updateRateMs;
+        if (updateRateMs <= 0)
+        {
+            return 1000;
+        }
+
+        return Math.Max(100, updateRateMs);
     }
 
 
