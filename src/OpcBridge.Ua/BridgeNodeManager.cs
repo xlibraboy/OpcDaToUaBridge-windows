@@ -8,7 +8,7 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
 {
     private const string NamespaceUri = "urn:ohmypi:opc-da-to-ua-bridge:tags";
     private readonly IReadOnlyList<TagMapping> mappings_;
-    private readonly Dictionary<string, BaseDataVariableState> variables_by_da_item_ = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, BaseDataVariableState> variables_by_mapping_key_ = new(StringComparer.OrdinalIgnoreCase);
     private FolderState? root_folder_;
     private ushort namespace_index_;
 
@@ -44,50 +44,49 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
             {
                 TagMapping mapping = mappings_[i];
                 BaseDataVariableState variable = CreateVariable(root, mapping);
-                variables_by_da_item_[mapping.DaItemId] = variable;
+                variables_by_mapping_key_[GetMappingKey(mapping.SourceId, mapping.DaItemId)] = variable;
                 AddPredefinedNode(SystemContext, variable);
             }
         }
     }
 
-    /// <summary>Adds a tag variable to the running address space (no server restart).</summary>
     public void AddMapping(TagMapping mapping)
     {
         lock (Lock)
         {
-            if (root_folder_ is null || variables_by_da_item_.ContainsKey(mapping.DaItemId))
+            string key = GetMappingKey(mapping.SourceId, mapping.DaItemId);
+            if (root_folder_ is null || variables_by_mapping_key_.ContainsKey(key))
             {
                 return;
             }
 
             BaseDataVariableState variable = CreateVariable(root_folder_, mapping);
-            variables_by_da_item_[mapping.DaItemId] = variable;
+            variables_by_mapping_key_[key] = variable;
             AddPredefinedNode(SystemContext, variable);
         }
     }
 
-    /// <summary>Removes a tag variable from the running address space.</summary>
-    public void RemoveMapping(string daItemId)
+    public void RemoveMapping(string sourceId, string daItemId)
     {
         lock (Lock)
         {
-            if (!variables_by_da_item_.TryGetValue(daItemId, out BaseDataVariableState? variable))
+            string key = GetMappingKey(sourceId, daItemId);
+            if (!variables_by_mapping_key_.TryGetValue(key, out BaseDataVariableState? variable))
             {
                 return;
             }
 
-            root_folder_?.RemoveChild(variable);
+            variable.Parent?.RemoveChild(variable);
             DeleteNode(SystemContext, variable.NodeId);
-            variables_by_da_item_.Remove(daItemId);
+            variables_by_mapping_key_.Remove(key);
         }
     }
 
-    /// <summary>Returns the DA item IDs currently exposed in the address space.</summary>
-    public IReadOnlyCollection<string> GetMappedItemIds()
+    public IReadOnlyCollection<string> GetMappedKeys()
     {
         lock (Lock)
         {
-            return variables_by_da_item_.Keys.ToArray();
+            return variables_by_mapping_key_.Keys.ToArray();
         }
     }
 
@@ -95,7 +94,7 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
     {
         lock (Lock)
         {
-            if (!variables_by_da_item_.TryGetValue(value.DaItemId, out BaseDataVariableState? variable))
+            if (!variables_by_mapping_key_.TryGetValue(GetMappingKey(value.SourceId, value.DaItemId), out BaseDataVariableState? variable))
             {
                 return;
             }
@@ -137,7 +136,7 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
             NodeId = new NodeId(ToNodeIdentifier(mapping), namespace_index_),
             BrowseName = new QualifiedName(mapping.DisplayName, namespace_index_),
             DisplayName = new LocalizedText(mapping.DisplayName),
-            Description = new LocalizedText(mapping.DaItemId),
+            Description = new LocalizedText($"{mapping.SourceId}:{mapping.DaItemId}"),
             WriteMask = AttributeWriteMask.None,
             UserWriteMask = AttributeWriteMask.None,
             DataType = dataType,
@@ -154,12 +153,17 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
         return variable;
     }
 
+    private static string GetMappingKey(string sourceId, string daItemId)
+    {
+        return string.Concat(sourceId.Trim(), "::", daItemId.Trim());
+    }
+
     private static string ToNodeIdentifier(TagMapping mapping)
     {
         string nodeId = mapping.UaNodeId.Trim();
         if (nodeId.Length == 0)
         {
-            return mapping.DaItemId;
+            return $"{mapping.SourceId}/{mapping.DaItemId}";
         }
 
         int stringMarker = nodeId.IndexOf(";s=", StringComparison.OrdinalIgnoreCase);

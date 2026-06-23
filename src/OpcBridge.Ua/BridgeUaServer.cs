@@ -19,7 +19,6 @@ internal sealed class BridgeUaServer : StandardServer
         node_manager_?.UpdateValue(value);
     }
 
-    /// <summary>Diffs the running address space against the desired mappings, adding/removing nodes live.</summary>
     public void SyncMappings(IReadOnlyList<TagMapping> mappings)
     {
         if (node_manager_ is null)
@@ -27,20 +26,26 @@ internal sealed class BridgeUaServer : StandardServer
             return;
         }
 
-        var desired = new HashSet<string>(mappings.Select(m => m.DaItemId), StringComparer.OrdinalIgnoreCase);
-        var current = new HashSet<string>(node_manager_.GetMappedItemIds(), StringComparer.OrdinalIgnoreCase);
+        HashSet<string> desired = mappings
+            .Select(mapping => GetMappingKey(mapping.SourceId, mapping.DaItemId))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> current = node_manager_.GetMappedKeys().ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        foreach (string itemId in current)
+        foreach (string key in current)
         {
-            if (!desired.Contains(itemId))
+            if (!desired.Contains(key))
             {
-                node_manager_.RemoveMapping(itemId);
+                int separator = key.IndexOf("::", StringComparison.Ordinal);
+                if (separator > 0)
+                {
+                    node_manager_.RemoveMapping(key[..separator], key[(separator + 2)..]);
+                }
             }
         }
 
         foreach (TagMapping mapping in mappings)
         {
-            if (!current.Contains(mapping.DaItemId))
+            if (!current.Contains(GetMappingKey(mapping.SourceId, mapping.DaItemId)))
             {
                 node_manager_.AddMapping(mapping);
             }
@@ -74,5 +79,10 @@ internal sealed class BridgeUaServer : StandardServer
             BuildNumber = "0",
             BuildDate = DateTime.UtcNow
         };
+    }
+
+    private static string GetMappingKey(string sourceId, string daItemId)
+    {
+        return string.Concat(sourceId.Trim(), "::", daItemId.Trim());
     }
 }

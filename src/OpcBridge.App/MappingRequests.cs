@@ -1,6 +1,7 @@
 namespace OpcBridge.App;
 
 public sealed record MappingTagDto(
+    string SourceId,
     string DaItemId,
     string? DisplayName = null,
     string? DataType = null,
@@ -8,4 +9,4 @@ public sealed record MappingTagDto(
 
 public sealed record MappingAddRequest(List<MappingTagDto>? Tags);
 
-public sealed record MappingRemoveRequest(string DaItemId);
+public sealed record MappingRemoveRequest(string SourceId, string DaItemId);

@@ -20,16 +20,15 @@ public static class OpcTagBrowser
     private const int OpcBrowseTo = 3;
 
     // Namespace organization
-    private const int OpcNsHierarchial = 1;
     private const int OpcNsFlat = 2;
 
     /// <summary>
-    /// Browse one level of the address space at <paramref name="path"/> (empty = root).
-    /// Returns branches (folders) and leaves (tags).
+    /// Browse the address space at <paramref name="path" />.
+    /// Non-recursive browsing returns one level; recursive browsing returns every leaf below the path.
     /// </summary>
     [SupportedOSPlatform("windows")]
     public static OpcTagBrowseResult Browse(
-        string progId, string? host, string path,
+        string progId, string? host, string path, bool recursive,
         string? username, string? password, string? domain)
     {
         if (!OperatingSystem.IsWindows())
@@ -44,13 +43,13 @@ public static class OpcTagBrowser
         WindowsImpersonation.Run(
             normalizedHost is null ? null : username,
             password, domain, normalizedHost ?? string.Empty,
-            () => result = BrowseCore(progId, normalizedHost, path ?? string.Empty));
+            () => result = BrowseCore(progId, normalizedHost, path ?? string.Empty, recursive));
 
         return result;
     }
 
     [SupportedOSPlatform("windows")]
-    private static OpcTagBrowseResult BrowseCore(string progId, string? host, string path)
+    private static OpcTagBrowseResult BrowseCore(string progId, string? host, string path, bool recursive)
     {
         Type? serverType = host is null
             ? Type.GetTypeFromProgID(progId, throwOnError: false)
@@ -73,22 +72,24 @@ public static class OpcTagBrowser
 
             browse.QueryOrganization(out int organization);
 
-            // Flat address space: just enumerate all leaves
             if (organization == OpcNsFlat)
             {
-                var flatTags = EnumerateLeaves(browse, OpcFlat);
+                List<OpcTagNode> flatTags = EnumerateLeaves(browse, OpcFlat, string.Empty);
                 return new OpcTagBrowseResult([], flatTags);
             }
 
-            // Hierarchical: navigate to the requested path first
-            browse.ChangeBrowsePosition(OpcBrowseTo, string.Empty); // reset to root
-            if (!string.IsNullOrEmpty(path))
+            MoveToRoot(browse);
+            MoveToPath(browse, path);
+
+            if (recursive)
             {
-                browse.ChangeBrowsePosition(OpcBrowseTo, path);
+                List<OpcTagNode> allTags = new();
+                CollectLeavesRecursive(browse, NormalizePath(path), allTags, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                return new OpcTagBrowseResult([], allTags);
             }
 
-            var branches = EnumerateBranches(browse);
-            var tags     = EnumerateLeaves(browse, OpcLeaf);
+            List<string> branches = EnumerateBranches(browse);
+            List<OpcTagNode> tags = EnumerateLeaves(browse, OpcLeaf, NormalizePath(path));
 
             return new OpcTagBrowseResult(branches, tags);
         }
@@ -99,9 +100,39 @@ public static class OpcTagBrowser
     }
 
     [SupportedOSPlatform("windows")]
+    private static void MoveToRoot(IOPCBrowseServerAddressSpace browse)
+    {
+        int hr = browse.ChangeBrowsePosition(OpcBrowseTo, string.Empty);
+        if (hr < 0)
+        {
+            Marshal.ThrowExceptionForHR(hr);
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void MoveToPath(IOPCBrowseServerAddressSpace browse, string path)
+    {
+        string normalizedPath = NormalizePath(path);
+        if (normalizedPath.Length == 0)
+        {
+            return;
+        }
+
+        string[] segments = normalizedPath.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        for (int i = 0; i < segments.Length; i++)
+        {
+            int hr = browse.ChangeBrowsePosition(OpcBrowseDown, segments[i]);
+            if (hr < 0)
+            {
+                throw new InvalidOperationException($"OPC DA browse path '{normalizedPath}' is not available.", Marshal.GetExceptionForHR(hr));
+            }
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
     private static List<string> EnumerateBranches(IOPCBrowseServerAddressSpace browse)
     {
-        var names = new List<string>();
+        List<string> names = new();
         try
         {
             browse.BrowseOPCItemIDs(OpcBranch, string.Empty, 0, 0, out IEnumString enumerator);
@@ -112,9 +143,9 @@ public static class OpcTagBrowser
     }
 
     [SupportedOSPlatform("windows")]
-    private static List<OpcTagNode> EnumerateLeaves(IOPCBrowseServerAddressSpace browse, int browseType)
+    private static List<OpcTagNode> EnumerateLeaves(IOPCBrowseServerAddressSpace browse, int browseType, string path)
     {
-        var names = new List<string>();
+        List<string> names = new();
         try
         {
             browse.BrowseOPCItemIDs(browseType, string.Empty, 0, 0, out IEnumString enumerator);
@@ -122,14 +153,49 @@ public static class OpcTagBrowser
         }
         catch { /* none */ }
 
-        var result = new List<OpcTagNode>(names.Count);
-        foreach (string n in names)
+        List<OpcTagNode> result = new(names.Count);
+        foreach (string name in names)
         {
-            string itemId = n;
-            try { browse.GetItemID(n, out itemId); } catch { /* keep */ }
-            result.Add(new OpcTagNode(n, itemId));
+            string itemId = name;
+            try { browse.GetItemID(name, out itemId); } catch { /* keep */ }
+            string displayName = path.Length == 0 ? name : string.Concat(path, ".", name);
+            result.Add(new OpcTagNode(displayName, itemId));
         }
         return result;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void CollectLeavesRecursive(IOPCBrowseServerAddressSpace browse, string path, List<OpcTagNode> tags, HashSet<string> visitedPaths)
+    {
+        if (!visitedPaths.Add(path))
+        {
+            return;
+        }
+
+        tags.AddRange(EnumerateLeaves(browse, OpcLeaf, path));
+
+        foreach (string branch in EnumerateBranches(browse))
+        {
+            string childPath = path.Length == 0 ? branch : string.Concat(path, ".", branch);
+            int downHr = browse.ChangeBrowsePosition(OpcBrowseDown, branch);
+            if (downHr < 0)
+            {
+                continue;
+            }
+
+            try
+            {
+                CollectLeavesRecursive(browse, childPath, tags, visitedPaths);
+            }
+            finally
+            {
+                int upHr = browse.ChangeBrowsePosition(OpcBrowseUp, string.Empty);
+                if (upHr < 0)
+                {
+                    Marshal.ThrowExceptionForHR(upHr);
+                }
+            }
+        }
     }
 
     [SupportedOSPlatform("windows")]
@@ -137,7 +203,7 @@ public static class OpcTagBrowser
     {
         if (enumerator is null) return;
         string[] batch = new string[1];
-        var fetched = new int[1];
+        int[] fetched = new int[1];
         while (true)
         {
             int hr = enumerator.Next(1, batch, fetched);
@@ -145,6 +211,11 @@ public static class OpcTagBrowser
             if (!string.IsNullOrEmpty(batch[0])) output.Add(batch[0]);
         }
         Marshal.FinalReleaseComObject(enumerator);
+    }
+
+    private static string NormalizePath(string? path)
+    {
+        return path?.Trim().Trim('.') ?? string.Empty;
     }
 
     private static string? NormalizeHost(string? host)
@@ -157,8 +228,6 @@ public static class OpcTagBrowser
             return null;
         return t;
     }
-
-    // EnumLeaves helper resolves item IDs inline
 
     [ComImport]
     [Guid("39C13A4F-011E-11D0-9675-0020AFD8ADB3")]

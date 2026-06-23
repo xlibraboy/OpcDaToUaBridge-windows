@@ -38,94 +38,180 @@ app.MapGet("/api/dashboard", (BridgeState state, UaServerHost uaServer) => Resul
     ua = uaServer.GetStatus(),
     values = state.GetValues()
 }));
-app.MapPost("/api/da/mode", (ModeChangeRequest request, DaRuntimeSettings settings) =>
-{
-    DaRuntimeSettingsSnapshot snapshot = settings.SetMode(request.Mode);
-    return Results.Json(new { mode = snapshot.Mode, version = snapshot.Version });
-});
-app.MapGet("/api/da/config", (DaRuntimeSettings settings) =>
+app.MapGet("/api/da/sources", (DaRuntimeSettings settings) =>
 {
     DaRuntimeSettingsSnapshot snapshot = settings.GetSnapshot();
     return Results.Json(new
     {
-        progId = snapshot.ProgId,
-        host = snapshot.Host,
-        remoteUsername = snapshot.RemoteUsername,
-        remoteDomain = snapshot.RemoteDomain
-        // password intentionally omitted from GET response
+        updateRateMs = snapshot.UpdateRateMs,
+        sources = snapshot.Sources.Select(source => new
+        {
+            sourceId = source.SourceId,
+            displayName = source.DisplayName,
+            progId = source.ProgId,
+            host = source.Host,
+            remoteUsername = source.RemoteUsername,
+            remoteDomain = source.RemoteDomain
+        })
     });
 });
-app.MapPost("/api/da/config", (DaServerConfigRequest request, DaRuntimeSettings settings) =>
+app.MapPost("/api/da/sources", (DaServerConfigRequest request, DaRuntimeSettings settings) =>
 {
-    DaRuntimeSettingsSnapshot snapshot = settings.SetServerConfig(
-        request.ProgId, request.Host,
-        request.RemoteUsername, request.RemotePassword, request.RemoteDomain);
-    return Results.Json(new { progId = snapshot.ProgId, host = snapshot.Host, version = snapshot.Version });
+    if (string.IsNullOrWhiteSpace(request.SourceId))
+    {
+        return Results.BadRequest(new { error = "Source ID is required." });
+    }
+
+    DaRuntimeSettingsSnapshot snapshot = settings.UpsertSource(new DaSourceRuntimeSettings(
+        request.SourceId,
+        request.DisplayName ?? string.Empty,
+        request.ProgId,
+        request.Host,
+        request.RemoteUsername,
+        request.RemotePassword,
+        request.RemoteDomain));
+
+    DaSourceRuntimeSettings source = snapshot.GetSource(request.SourceId)!;
+    return Results.Json(new
+    {
+        version = snapshot.Version,
+        source = new
+        {
+            sourceId = source.SourceId,
+            displayName = source.DisplayName,
+            progId = source.ProgId,
+            host = source.Host,
+            remoteUsername = source.RemoteUsername,
+            remoteDomain = source.RemoteDomain
+        }
+    });
+});
+app.MapPost("/api/da/sources/remove", (DaSourceRemoveRequest request, DaRuntimeSettings settings, MappingStore store) =>
+{
+    if (!settings.TryRemoveSource(request.SourceId, out DaRuntimeSettingsSnapshot snapshot))
+    {
+        return Results.BadRequest(new { error = "Cannot remove the last source or source was not found." });
+    }
+
+    long mappingVersion = store.RemoveSource(request.SourceId);
+    return Results.Json(new { version = snapshot.Version, mappingVersion });
 });
 app.MapGet("/api/da/servers", async (string? host) =>
 {
     if (!OperatingSystem.IsWindows())
+    {
         return Results.Json(new { error = "OPC DA enumeration requires Windows.", servers = Array.Empty<object>() });
+    }
+
     try
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var servers = await Task.Run(() => OpcBridge.Da.OpcServerEnumerator.Enumerate(host), cts.Token);
+        IReadOnlyList<OpcServerInfo> servers = await Task.Run(() => EnumerateDaServers(host), cts.Token);
         return Results.Json(new { servers });
     }
     catch (OperationCanceledException)
     {
         return Results.Json(new { error = "Enumeration timed out. Check OpcEnum service and DCOM settings.", servers = Array.Empty<object>() });
     }
-    catch (Exception ex)
+    catch (Exception exception)
     {
-        return Results.Json(new { error = ex.Message, servers = Array.Empty<object>() });
+        return Results.Json(new { error = exception.Message, servers = Array.Empty<object>() });
     }
 });
 app.MapPost("/api/da/tags", async (DaTagBrowseRequest request) =>
 {
     if (!OperatingSystem.IsWindows())
+    {
         return Results.Json(new { error = "OPC DA browsing requires Windows.", branches = Array.Empty<object>(), tags = Array.Empty<object>() });
+    }
+
     try
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        var result = await Task.Run(() => OpcBridge.Da.OpcTagBrowser.Browse(
-            request.ProgId, request.Host, request.Path ?? string.Empty,
-            request.RemoteUsername, request.RemotePassword, request.RemoteDomain), cts.Token);
+        OpcTagBrowseResult result = await Task.Run(() => BrowseDaTags(request), cts.Token);
         return Results.Json(new { branches = result.Branches, tags = result.Tags });
     }
     catch (OperationCanceledException)
     {
         return Results.Json(new { error = "Tag browse timed out. Check the server and DCOM settings.", branches = Array.Empty<object>(), tags = Array.Empty<object>() });
     }
-    catch (Exception ex)
+    catch (Exception exception)
     {
-        return Results.Json(new { error = ex.Message, branches = Array.Empty<object>(), tags = Array.Empty<object>() });
+        return Results.Json(new { error = exception.Message, branches = Array.Empty<object>(), tags = Array.Empty<object>() });
     }
 });
 app.MapGet("/api/mappings", (MappingStore store) =>
 {
-    var (mappings, version) = store.GetSnapshot();
+    (IReadOnlyList<TagMapping> mappings, long version) = store.GetSnapshot();
     return Results.Json(new { mappings, version });
 });
 app.MapPost("/api/mappings/add", (MappingAddRequest request, MappingStore store) =>
 {
-    var tags = (request.Tags ?? new List<MappingTagDto>())
-        .Where(t => !string.IsNullOrWhiteSpace(t.DaItemId))
-        .Select(t => new OpcBridge.Core.TagMapping
+    if (request.Tags is null || request.Tags.Count == 0)
+    {
+        return Results.BadRequest(new { error = "At least one mapping is required." });
+    }
+
+    if (request.Tags.Any(tag => string.IsNullOrWhiteSpace(tag.SourceId) || string.IsNullOrWhiteSpace(tag.DaItemId)))
+    {
+        return Results.BadRequest(new { error = "Source ID and DA Item ID are required for every mapping." });
+    }
+
+    IEnumerable<TagMapping> tags = request.Tags
+        .Select(tag => new TagMapping
         {
-            DaItemId = t.DaItemId,
-            DisplayName = t.DisplayName ?? string.Empty,
-            DataType = t.DataType ?? "Auto",
-            UaNodeId = t.UaNodeId ?? string.Empty
+            SourceId = tag.SourceId,
+            DaItemId = tag.DaItemId,
+            DisplayName = tag.DisplayName ?? string.Empty,
+            DataType = tag.DataType ?? "Auto",
+            UaNodeId = tag.UaNodeId ?? string.Empty
         });
+
     long version = store.Add(tags);
     return Results.Json(new { version });
 });
 app.MapPost("/api/mappings/remove", (MappingRemoveRequest request, MappingStore store) =>
 {
-    long version = store.Remove(request.DaItemId);
+    if (string.IsNullOrWhiteSpace(request.SourceId) || string.IsNullOrWhiteSpace(request.DaItemId))
+    {
+        return Results.BadRequest(new { error = "Source ID and DA Item ID are required." });
+    }
+
+    long version = store.Remove(request.SourceId, request.DaItemId);
     return Results.Json(new { version });
 });
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
 await app.RunAsync().ConfigureAwait(false);
+
+static IReadOnlyList<OpcServerInfo> EnumerateDaServers(string? host)
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        throw new PlatformNotSupportedException("OPC DA enumeration requires Windows.");
+    }
+
+    return OpcServerEnumerator.Enumerate(host);
+}
+
+static OpcTagBrowseResult BrowseDaTags(DaTagBrowseRequest request)
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        throw new PlatformNotSupportedException("OPC DA browsing requires Windows.");
+    }
+
+    return OpcTagBrowser.Browse(
+        request.ProgId,
+        request.Host,
+        request.Path ?? string.Empty,
+        request.Recursive,
+        request.RemoteUsername,
+        request.RemotePassword,
+        request.RemoteDomain);
+}
+
+namespace OpcBridge.App
+{
+    public sealed record DaSourceRemoveRequest(string SourceId);
+}

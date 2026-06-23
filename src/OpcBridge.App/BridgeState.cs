@@ -5,41 +5,117 @@ namespace OpcBridge.App;
 
 public sealed class BridgeState
 {
-    private readonly ConcurrentDictionary<string, BridgeValueSnapshot> values_by_da_item_ = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, BridgeValueSnapshot> values_by_key_ = new(StringComparer.OrdinalIgnoreCase);
     private readonly object status_lock_ = new();
     private BridgeRuntimeStatus status_ = BridgeRuntimeStatus.Empty;
 
-    public void Configure(string daMode, int updateRateMs, int mappingCount)
+    public void Configure(int updateRateMs, int mappingCount, IReadOnlyList<DaSourceRuntimeSettings> sources)
     {
+        DaSourceStatusSnapshot[] sourceStatuses = sources
+            .Select(source => new DaSourceStatusSnapshot(
+                source.SourceId,
+                source.DisplayName,
+                source.Host,
+                source.ProgId,
+                "Disconnected",
+                null,
+                null,
+                0))
+            .ToArray();
+
         lock (status_lock_)
         {
             status_ = status_ with
             {
                 BridgeState = "Starting",
-                DaMode = daMode,
-                DaConnectionState = "Disconnected",
                 UpdateRateMs = updateRateMs,
                 MappingCount = mappingCount,
+                DaConnectionState = AggregateConnectionState(sourceStatuses),
                 LastDaReadUtc = null,
                 LastDaReadCount = 0,
                 LastUaWriteUtc = null,
                 LastUaWriteCount = 0,
-                LastError = null
+                LastError = null,
+                Sources = sourceStatuses
             };
         }
     }
 
-    public void SetDaMode(string daMode)
+    public void UpdateSources(int updateRateMs, int mappingCount, IReadOnlyList<DaSourceRuntimeSettings> sources)
     {
         lock (status_lock_)
         {
-            status_ = status_ with { DaMode = daMode };
+            Dictionary<string, DaSourceStatusSnapshot> existing = status_.Sources.ToDictionary(source => source.SourceId, StringComparer.OrdinalIgnoreCase);
+            DaSourceStatusSnapshot[] merged = new DaSourceStatusSnapshot[sources.Count];
+
+            for (int i = 0; i < sources.Count; i++)
+            {
+                DaSourceRuntimeSettings source = sources[i];
+                if (!existing.TryGetValue(source.SourceId, out DaSourceStatusSnapshot? previous))
+                {
+                    previous = new DaSourceStatusSnapshot(
+                        source.SourceId,
+                        source.DisplayName,
+                        source.Host,
+                        source.ProgId,
+                        "Disconnected",
+                        null,
+                        null,
+                        0);
+                }
+                else
+                {
+                    previous = previous with
+                    {
+                        DisplayName = source.DisplayName,
+                        Host = source.Host,
+                        ProgId = source.ProgId
+                    };
+                }
+
+                merged[i] = previous;
+            }
+
+            status_ = status_ with
+            {
+                UpdateRateMs = updateRateMs,
+                MappingCount = mappingCount,
+                DaConnectionState = AggregateConnectionState(merged),
+                Sources = merged
+            };
         }
     }
 
     public void ClearValues()
     {
-        values_by_da_item_.Clear();
+        values_by_key_.Clear();
+    }
+
+    public void ClearSourceValues(string sourceId)
+    {
+        string prefix = NormalizeKey(sourceId, string.Empty);
+        foreach (string key in values_by_key_.Keys)
+        {
+            if (key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                values_by_key_.TryRemove(key, out _);
+            }
+        }
+    }
+
+    public void RetainMappedValues(IReadOnlyList<TagMapping> mappings)
+    {
+        HashSet<string> mappedKeys = mappings
+            .Select(mapping => NormalizeKey(mapping.SourceId, mapping.DaItemId))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (string key in values_by_key_.Keys)
+        {
+            if (!mappedKeys.Contains(key))
+            {
+                values_by_key_.TryRemove(key, out _);
+            }
+        }
     }
 
     public void SetBridgeState(string bridgeState)
@@ -58,6 +134,24 @@ public sealed class BridgeState
         }
     }
 
+    public void SetSourceConnectionState(string sourceId, string connectionState)
+    {
+        lock (status_lock_)
+        {
+            DaSourceStatusSnapshot[] updated = status_.Sources
+                .Select(source => string.Equals(source.SourceId, sourceId, StringComparison.OrdinalIgnoreCase)
+                    ? source with { ConnectionState = connectionState }
+                    : source)
+                .ToArray();
+
+            status_ = status_ with
+            {
+                DaConnectionState = AggregateConnectionState(updated),
+                Sources = updated
+            };
+        }
+    }
+
     public void SetError(Exception exception)
     {
         lock (status_lock_)
@@ -70,14 +164,39 @@ public sealed class BridgeState
         }
     }
 
-    public void UpdateDaRead(IReadOnlyList<BridgeValue> values)
+    public void SetSourceError(string sourceId, Exception exception)
+    {
+        lock (status_lock_)
+        {
+            DaSourceStatusSnapshot[] updated = status_.Sources
+                .Select(source => string.Equals(source.SourceId, sourceId, StringComparison.OrdinalIgnoreCase)
+                    ? source with
+                    {
+                        ConnectionState = "Faulted",
+                        LastError = exception.Message
+                    }
+                    : source)
+                .ToArray();
+
+            status_ = status_ with
+            {
+                BridgeState = "Faulted",
+                DaConnectionState = AggregateConnectionState(updated),
+                LastError = exception.Message,
+                Sources = updated
+            };
+        }
+    }
+
+    public void UpdateDaRead(string sourceId, IReadOnlyList<BridgeValue> values)
     {
         DateTime readTime = DateTime.UtcNow;
 
         for (int i = 0; i < values.Count; i++)
         {
             BridgeValue value = values[i];
-            values_by_da_item_[value.DaItemId] = new BridgeValueSnapshot(
+            values_by_key_[NormalizeKey(value.SourceId, value.DaItemId)] = new BridgeValueSnapshot(
+                value.SourceId,
                 value.DaItemId,
                 value.Value,
                 value.TimestampUtc,
@@ -87,13 +206,26 @@ public sealed class BridgeState
 
         lock (status_lock_)
         {
+            DaSourceStatusSnapshot[] updated = status_.Sources
+                .Select(source => string.Equals(source.SourceId, sourceId, StringComparison.OrdinalIgnoreCase)
+                    ? source with
+                    {
+                        ConnectionState = "Connected",
+                        LastDaReadUtc = readTime,
+                        LastDaReadCount = values.Count,
+                        LastError = null
+                    }
+                    : source)
+                .ToArray();
+
             status_ = status_ with
             {
                 BridgeState = "Running",
-                DaConnectionState = "Connected",
+                DaConnectionState = AggregateConnectionState(updated),
                 LastDaReadUtc = readTime,
                 LastDaReadCount = values.Count,
-                LastError = null
+                LastError = null,
+                Sources = updated
             };
         }
     }
@@ -112,9 +244,9 @@ public sealed class BridgeState
 
     public IReadOnlyList<BridgeValueSnapshot> GetValues()
     {
-        return values_by_da_item_
-            .Values
-            .OrderBy(value => value.DaItemId, StringComparer.OrdinalIgnoreCase)
+        return values_by_key_.Values
+            .OrderBy(value => value.SourceId, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(value => value.DaItemId, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
 
@@ -125,11 +257,56 @@ public sealed class BridgeState
             return status_;
         }
     }
+
+    private static string AggregateConnectionState(IReadOnlyList<DaSourceStatusSnapshot> sources)
+    {
+        if (sources.Count == 0)
+        {
+            return "Disconnected";
+        }
+
+        bool anyConnected = false;
+        bool anyConnecting = false;
+        bool anyFaulted = false;
+
+        for (int i = 0; i < sources.Count; i++)
+        {
+            string state = sources[i].ConnectionState;
+            if (string.Equals(state, "Connected", StringComparison.OrdinalIgnoreCase))
+            {
+                anyConnected = true;
+                continue;
+            }
+
+            if (string.Equals(state, "Connecting", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(state, "Reconnecting", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(state, "Switching", StringComparison.OrdinalIgnoreCase))
+            {
+                anyConnecting = true;
+                continue;
+            }
+
+            if (string.Equals(state, "Faulted", StringComparison.OrdinalIgnoreCase))
+            {
+                anyFaulted = true;
+            }
+        }
+
+        if (anyConnected && (anyConnecting || anyFaulted)) return "Partial";
+        if (anyConnected) return "Connected";
+        if (anyConnecting) return "Connecting";
+        if (anyFaulted) return "Faulted";
+        return "Disconnected";
+    }
+
+    private static string NormalizeKey(string sourceId, string daItemId)
+    {
+        return string.Concat(sourceId.Trim(), "::", daItemId.Trim());
+    }
 }
 
 public sealed record BridgeRuntimeStatus(
     string BridgeState,
-    string DaMode,
     string DaConnectionState,
     int UpdateRateMs,
     int MappingCount,
@@ -137,11 +314,11 @@ public sealed record BridgeRuntimeStatus(
     int LastDaReadCount,
     DateTime? LastUaWriteUtc,
     int LastUaWriteCount,
-    string? LastError)
+    string? LastError,
+    IReadOnlyList<DaSourceStatusSnapshot> Sources)
 {
     public static BridgeRuntimeStatus Empty { get; } = new(
         "Stopped",
-        "Unknown",
         "Disconnected",
         0,
         0,
@@ -149,10 +326,22 @@ public sealed record BridgeRuntimeStatus(
         0,
         null,
         0,
-        null);
+        null,
+        Array.Empty<DaSourceStatusSnapshot>());
 }
 
+public sealed record DaSourceStatusSnapshot(
+    string SourceId,
+    string DisplayName,
+    string Host,
+    string ProgId,
+    string ConnectionState,
+    DateTime? LastDaReadUtc,
+    string? LastError,
+    int LastDaReadCount);
+
 public sealed record BridgeValueSnapshot(
+    string SourceId,
     string DaItemId,
     object? Value,
     DateTime TimestampUtc,

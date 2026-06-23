@@ -4,10 +4,8 @@ namespace OpcBridge.App;
 
 public sealed class DaClientFactory
 {
-    public IDaClient Create(DaRuntimeSettingsSnapshot settings)
+    public IDaClient Create(DaRuntimeSettingsSnapshot settings, DaSourceRuntimeSettings source)
     {
-        return string.Equals(settings.Mode, "OpcDa", StringComparison.OrdinalIgnoreCase)
-            ? new OpcDaClient(settings.ToOptions())
-            : new SimulatedDaClient();
+        return new OpcDaClient(source.ToOptions(settings.UpdateRateMs));
     }
 }

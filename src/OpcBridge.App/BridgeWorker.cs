@@ -35,16 +35,16 @@ public sealed class BridgeWorker : BackgroundService
     {
         DaRuntimeSettingsSnapshot settings = da_settings_.GetSnapshot();
         (IReadOnlyList<TagMapping> mappings, long mappingVersion) = mapping_store_.GetSnapshot();
-        bridge_state_.Configure(settings.Mode, settings.UpdateRateMs, mappings.Count);
+        bridge_state_.Configure(settings.UpdateRateMs, mappings.Count, settings.Sources);
 
         try
         {
-            logger_.LogInformation("Starting bridge with {MappingCount} mappings", mappings.Count);
+            logger_.LogInformation("Starting bridge with {MappingCount} mappings across {SourceCount} sources", mappings.Count, settings.Sources.Count);
             await ua_server_.StartAsync(mappings, stoppingToken).ConfigureAwait(false);
 
-            long connectedVersion = -1;
             long uaMappingVersion = mappingVersion;
-            IDaClient? daClient = null;
+            long connectedVersion = -1;
+            Dictionary<string, SourceSession> sessions = new(StringComparer.OrdinalIgnoreCase);
 
             try
             {
@@ -55,48 +55,76 @@ public sealed class BridgeWorker : BackgroundService
 
                     try
                     {
-                        // Apply tag mapping changes live (add/remove UA nodes) and force DA refresh.
                         if (mappingVersion != uaMappingVersion)
                         {
                             ua_server_.SyncMappings(mappings);
+                            bridge_state_.RetainMappedValues(mappings);
                             uaMappingVersion = mappingVersion;
-                            connectedVersion = -1; // force DA client to reconfigure items
-                            bridge_state_.Configure(settings.Mode, settings.UpdateRateMs, mappings.Count);
+                            connectedVersion = -1;
+                            bridge_state_.UpdateSources(settings.UpdateRateMs, mappings.Count, settings.Sources);
                             logger_.LogInformation("Applied tag mapping change: {Count} mappings", mappings.Count);
                         }
 
-                        if (daClient is null || connectedVersion != settings.Version)
+                        if (connectedVersion != settings.Version)
                         {
-                            if (daClient is not null)
+                            await ReconfigureSessionsAsync(settings, sessions, stoppingToken).ConfigureAwait(false);
+                            connectedVersion = settings.Version;
+                            bridge_state_.UpdateSources(settings.UpdateRateMs, mappings.Count, settings.Sources);
+                        }
+
+                        int totalValueCount = 0;
+                        bool anySuccess = false;
+
+                        for (int i = 0; i < settings.Sources.Count; i++)
+                        {
+                            DaSourceRuntimeSettings source = settings.Sources[i];
+                            IReadOnlyList<TagMapping> sourceMappings = mappings
+                                .Where(mapping => string.Equals(mapping.SourceId, source.SourceId, StringComparison.OrdinalIgnoreCase))
+                                .ToArray();
+
+                            if (!sessions.TryGetValue(source.SourceId, out SourceSession? session))
                             {
-                                bridge_state_.SetBridgeState("Switching");
-                                bridge_state_.SetDaConnectionState("Reconnecting");
-                                bridge_state_.ClearValues();
-                                await daClient.DisposeAsync().ConfigureAwait(false);
-                                daClient = null;
+                                continue;
                             }
 
-                            bridge_state_.SetDaMode(settings.Mode);
-                            bridge_state_.Configure(settings.Mode, settings.UpdateRateMs, mappings.Count);
-                            bridge_state_.SetDaConnectionState("Connecting");
+                            try
+                            {
+                                bridge_state_.SetSourceConnectionState(source.SourceId, "Connected");
+                                IReadOnlyList<BridgeValue> values = await session.Client
+                                    .ReadAsync(sourceMappings, stoppingToken)
+                                    .ConfigureAwait(false);
 
-                            daClient = da_client_factory_.Create(settings);
-                            await daClient.ConnectAsync(stoppingToken).ConfigureAwait(false);
-                            connectedVersion = settings.Version;
-                            bridge_state_.SetDaConnectionState("Connected");
+                                bridge_state_.UpdateDaRead(source.SourceId, values);
+                                for (int valueIndex = 0; valueIndex < values.Count; valueIndex++)
+                                {
+                                    ua_server_.UpdateValue(values[valueIndex]);
+                                }
+
+                                totalValueCount += values.Count;
+                                anySuccess = true;
+                            }
+                            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                            {
+                                throw;
+                            }
+                            catch (Exception exception)
+                            {
+                                bridge_state_.SetSourceError(source.SourceId, exception);
+                                bridge_state_.ClearSourceValues(source.SourceId);
+                                logger_.LogWarning(exception, "Source {SourceId} read failed", source.SourceId);
+
+                                await session.Client.DisposeAsync().ConfigureAwait(false);
+                                sessions.Remove(source.SourceId);
+                                connectedVersion = -1;
+                            }
                         }
 
-                        IReadOnlyList<BridgeValue> values = await daClient
-                            .ReadAsync(mappings, stoppingToken)
-                            .ConfigureAwait(false);
-
-                        bridge_state_.UpdateDaRead(values);
-                        for (int i = 0; i < values.Count; i++)
+                        if (anySuccess)
                         {
-                            ua_server_.UpdateValue(values[i]);
+                            bridge_state_.SetBridgeState("Running");
+                            bridge_state_.MarkUaWrite(totalValueCount);
                         }
 
-                        bridge_state_.MarkUaWrite(values.Count);
                         await Task.Delay(settings.UpdateRateMs, stoppingToken).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -106,25 +134,17 @@ public sealed class BridgeWorker : BackgroundService
                     catch (Exception exception)
                     {
                         bridge_state_.SetError(exception);
-
-                        if (daClient is not null)
-                        {
-                            await daClient.DisposeAsync().ConfigureAwait(false);
-                            daClient = null;
-                        }
-
+                        logger_.LogError(exception, "Bridge loop failed");
+                        await DisposeSessionsAsync(sessions).ConfigureAwait(false);
+                        sessions.Clear();
                         connectedVersion = -1;
-                        bridge_state_.SetDaConnectionState("Disconnected");
                         await Task.Delay(settings.UpdateRateMs, stoppingToken).ConfigureAwait(false);
                     }
                 }
             }
             finally
             {
-                if (daClient is not null)
-                {
-                    await daClient.DisposeAsync().ConfigureAwait(false);
-                }
+                await DisposeSessionsAsync(sessions).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -141,4 +161,52 @@ public sealed class BridgeWorker : BackgroundService
         bridge_state_.SetDaConnectionState("Disconnected");
         bridge_state_.SetBridgeState("Stopped");
     }
+
+    private async Task ReconfigureSessionsAsync(
+        DaRuntimeSettingsSnapshot settings,
+        Dictionary<string, SourceSession> sessions,
+        CancellationToken cancellationToken)
+    {
+        HashSet<string> desiredSources = settings.Sources
+            .Select(source => source.SourceId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach ((string sourceId, SourceSession session) in sessions.ToArray())
+        {
+            if (desiredSources.Contains(sourceId))
+            {
+                continue;
+            }
+
+            await session.Client.DisposeAsync().ConfigureAwait(false);
+            sessions.Remove(sourceId);
+            bridge_state_.ClearSourceValues(sourceId);
+        }
+
+        for (int i = 0; i < settings.Sources.Count; i++)
+        {
+            DaSourceRuntimeSettings source = settings.Sources[i];
+
+            if (sessions.Remove(source.SourceId, out SourceSession? existing))
+            {
+                await existing.Client.DisposeAsync().ConfigureAwait(false);
+            }
+
+            bridge_state_.SetSourceConnectionState(source.SourceId, "Connecting");
+            IDaClient client = da_client_factory_.Create(settings, source);
+            await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
+            sessions[source.SourceId] = new SourceSession(source, client);
+            bridge_state_.SetSourceConnectionState(source.SourceId, "Connected");
+        }
+    }
+
+    private static async Task DisposeSessionsAsync(Dictionary<string, SourceSession> sessions)
+    {
+        foreach (SourceSession session in sessions.Values)
+        {
+            await session.Client.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private sealed record SourceSession(DaSourceRuntimeSettings Source, IDaClient Client);
 }

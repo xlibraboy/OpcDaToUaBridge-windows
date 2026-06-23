@@ -4,10 +4,6 @@ using OpcBridge.Core;
 
 namespace OpcBridge.App;
 
-/// <summary>
-/// Holds the live tag mappings. Changes bump a version that BridgeWorker watches,
-/// and are persisted to mappings.json so they survive restarts.
-/// </summary>
 public sealed class MappingStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
@@ -20,7 +16,7 @@ public sealed class MappingStore
     public MappingStore(IOptions<BridgeOptions> options)
     {
         persist_path_ = Path.Combine(AppContext.BaseDirectory, "mappings.json");
-        mappings_ = LoadFromDisk() ?? options.Value.Mappings ?? new List<TagMapping>();
+        mappings_ = NormalizeAll(LoadFromDisk() ?? options.Value.Mappings ?? new List<TagMapping>());
     }
 
     public (IReadOnlyList<TagMapping> Mappings, long Version) GetSnapshot()
@@ -36,61 +32,134 @@ public sealed class MappingStore
         get { lock (sync_) { return version_; } }
     }
 
-    /// <summary>Add one or more tags. Skips duplicates by DA item id. Returns the new version.</summary>
     public long Add(IEnumerable<TagMapping> tags)
     {
         lock (sync_)
         {
             bool changed = false;
+
             foreach (TagMapping tag in tags)
             {
-                if (string.IsNullOrWhiteSpace(tag.DaItemId)) continue;
-                if (mappings_.Any(m => string.Equals(m.DaItemId, tag.DaItemId, StringComparison.OrdinalIgnoreCase)))
+                TagMapping normalized = Normalize(tag);
+                if (normalized.DaItemId.Length == 0)
+                {
                     continue;
+                }
 
-                mappings_.Add(Normalize(tag));
+                if (mappings_.Any(mapping =>
+                    string.Equals(mapping.SourceId, normalized.SourceId, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(mapping.DaItemId, normalized.DaItemId, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                mappings_.Add(normalized);
                 changed = true;
             }
 
-            if (changed) { version_++; Persist(); }
+            if (changed)
+            {
+                version_++;
+                Persist();
+            }
+
             return version_;
         }
     }
 
-    /// <summary>Remove a tag by DA item id. Returns the new version.</summary>
-    public long Remove(string daItemId)
+    public long Remove(string sourceId, string daItemId)
     {
+        string normalizedSourceId = NormalizeSourceId(sourceId);
+        string normalizedItemId = daItemId?.Trim() ?? string.Empty;
+
         lock (sync_)
         {
-            int removed = mappings_.RemoveAll(m =>
-                string.Equals(m.DaItemId, daItemId, StringComparison.OrdinalIgnoreCase));
-            if (removed > 0) { version_++; Persist(); }
+            int removed = mappings_.RemoveAll(mapping =>
+                string.Equals(mapping.SourceId, normalizedSourceId, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(mapping.DaItemId, normalizedItemId, StringComparison.OrdinalIgnoreCase));
+
+            if (removed > 0)
+            {
+                version_++;
+                Persist();
+            }
+
             return version_;
         }
     }
 
-    /// <summary>Replace the entire mapping list.</summary>
+    public long RemoveSource(string sourceId)
+    {
+        string normalizedSourceId = NormalizeSourceId(sourceId);
+
+        lock (sync_)
+        {
+            int removed = mappings_.RemoveAll(mapping =>
+                string.Equals(mapping.SourceId, normalizedSourceId, StringComparison.OrdinalIgnoreCase));
+
+            if (removed > 0)
+            {
+                version_++;
+                Persist();
+            }
+
+            return version_;
+        }
+    }
+
     public long SetAll(IEnumerable<TagMapping> tags)
     {
         lock (sync_)
         {
-            mappings_ = tags.Where(t => !string.IsNullOrWhiteSpace(t.DaItemId)).Select(Normalize).ToList();
+            mappings_ = NormalizeAll(tags);
             version_++;
             Persist();
             return version_;
         }
     }
 
+    public IReadOnlyList<TagMapping> GetBySource(string sourceId)
+    {
+        string normalizedSourceId = NormalizeSourceId(sourceId);
+
+        lock (sync_)
+        {
+            return mappings_
+                .Where(mapping => string.Equals(mapping.SourceId, normalizedSourceId, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+        }
+    }
+
+    private static List<TagMapping> NormalizeAll(IEnumerable<TagMapping> tags)
+    {
+        return tags
+            .Select(Normalize)
+            .Where(tag => tag.DaItemId.Length > 0)
+            .GroupBy(tag => (tag.SourceId, tag.DaItemId), StringTupleComparer.Instance)
+            .Select(group => group.First())
+            .ToList();
+    }
+
     private static TagMapping Normalize(TagMapping tag)
     {
-        string itemId = tag.DaItemId.Trim();
+        string sourceId = NormalizeSourceId(tag.SourceId);
+        string itemId = tag.DaItemId?.Trim() ?? string.Empty;
+        string defaultNodeId = itemId.Length == 0 ? string.Empty : $"ns=2;s={sourceId}/{itemId}";
+
         return new TagMapping
         {
+            SourceId = sourceId,
             DaItemId = itemId,
-            UaNodeId = string.IsNullOrWhiteSpace(tag.UaNodeId) ? $"ns=2;s={itemId}" : tag.UaNodeId.Trim(),
+            UaNodeId = string.IsNullOrWhiteSpace(tag.UaNodeId) ? defaultNodeId : tag.UaNodeId.Trim(),
             DisplayName = string.IsNullOrWhiteSpace(tag.DisplayName) ? itemId : tag.DisplayName.Trim(),
             DataType = string.IsNullOrWhiteSpace(tag.DataType) ? "Auto" : tag.DataType.Trim()
         };
+    }
+
+    private static string NormalizeSourceId(string? sourceId)
+    {
+        string value = sourceId?.Trim() ?? string.Empty;
+        return value.Length == 0 ? DaRuntimeSettings.DefaultSourceId : value;
     }
 
     private void Persist()
@@ -102,7 +171,6 @@ public sealed class MappingStore
         }
         catch
         {
-            // persistence is best-effort; in-memory state remains authoritative
         }
     }
 
@@ -117,6 +185,24 @@ public sealed class MappingStore
         catch
         {
             return null;
+        }
+    }
+
+    private sealed class StringTupleComparer : IEqualityComparer<(string SourceId, string DaItemId)>
+    {
+        public static StringTupleComparer Instance { get; } = new();
+
+        public bool Equals((string SourceId, string DaItemId) x, (string SourceId, string DaItemId) y)
+        {
+            return string.Equals(x.SourceId, y.SourceId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(x.DaItemId, y.DaItemId, StringComparison.OrdinalIgnoreCase);
+        }
+
+        public int GetHashCode((string SourceId, string DaItemId) value)
+        {
+            return HashCode.Combine(
+                StringComparer.OrdinalIgnoreCase.GetHashCode(value.SourceId),
+                StringComparer.OrdinalIgnoreCase.GetHashCode(value.DaItemId));
         }
     }
 }

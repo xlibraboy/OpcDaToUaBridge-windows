@@ -191,6 +191,7 @@ public sealed class OpcDaClient : IDaClient
 
                     int quality = (ushort)itemState.Quality;
                     values[i] = new BridgeValue(
+                        options_.SourceId,
                         item_bindings_[i].DaItemId,
                         itemState.Value,
                         FileTimeToUtc(itemState.Timestamp),
