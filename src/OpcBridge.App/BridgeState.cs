@@ -106,6 +106,21 @@ public sealed class BridgeState
             }
         }
     }
+    public void SetValue(BridgeValue value)
+    {
+        values_by_key_[NormalizeKey(value.SourceId, value.DaItemId)] = new BridgeValueSnapshot(
+            value.SourceId,
+            value.DaItemId,
+            value.Value,
+            value.TimestampUtc,
+            value.DaQuality,
+            value.IsGood);
+    }
+
+    public void ClearValue(string sourceId, string daItemId)
+    {
+        values_by_key_.TryRemove(NormalizeKey(sourceId, daItemId), out _);
+    }
 
     public void RetainMappedValues(IReadOnlyList<TagMapping> mappings)
     {

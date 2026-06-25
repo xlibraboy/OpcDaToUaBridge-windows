@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using OpcBridge.Core;
@@ -39,12 +40,13 @@ public sealed class BridgeWorker : BackgroundService
         DaRuntimeSettingsSnapshot settings = da_settings_.GetSnapshot();
         (IReadOnlyList<TagMapping> mappings, long mappingVersion) = mapping_store_.GetSnapshot();
         SourceMappingCache sourceMappingCache = SourceMappingCache.Build(mappings);
-        bridge_state_.Configure(settings.UpdateRateMs, mappings.Count, settings.Sources);
+        IReadOnlyList<TagMapping> activeMappings = sourceMappingCache.GetActiveMappings();
+        bridge_state_.Configure(settings.UpdateRateMs, activeMappings.Count, settings.Sources);
 
         try
         {
-            logger_.LogInformation("Starting bridge with {MappingCount} mappings across {SourceCount} sources", mappings.Count, settings.Sources.Count);
-            await ua_server_.StartAsync(mappings, stoppingToken).ConfigureAwait(false);
+            logger_.LogInformation("Starting bridge with {MappingCount} mappings across {SourceCount} sources", activeMappings.Count, settings.Sources.Count);
+            await ua_server_.StartAsync(activeMappings, stoppingToken).ConfigureAwait(false);
 
             long uaMappingVersion = mappingVersion;
             long connectedVersion = -1;
@@ -62,19 +64,20 @@ public sealed class BridgeWorker : BackgroundService
                         if (mappingVersion != uaMappingVersion)
                         {
                             sourceMappingCache = SourceMappingCache.Build(mappings);
-                            ua_server_.SyncMappings(mappings);
-                            bridge_state_.RetainMappedValues(mappings);
+                            activeMappings = sourceMappingCache.GetActiveMappings();
+                            ua_server_.SyncMappings(activeMappings);
+                            bridge_state_.RetainMappedValues(activeMappings);
                             uaMappingVersion = mappingVersion;
                             connectedVersion = -1;
-                            bridge_state_.UpdateSources(settings.UpdateRateMs, mappings.Count, settings.Sources);
-                            logger_.LogInformation("Applied tag mapping change: {Count} mappings", mappings.Count);
+                            bridge_state_.UpdateSources(settings.UpdateRateMs, activeMappings.Count, settings.Sources);
+                            logger_.LogInformation("Applied tag mapping change: {Count} mappings", activeMappings.Count);
                         }
 
                         if (connectedVersion != settings.Version)
                         {
                             await ReconfigureSessionsAsync(settings, sessions, stoppingToken).ConfigureAwait(false);
                             connectedVersion = settings.Version;
-                            bridge_state_.UpdateSources(settings.UpdateRateMs, mappings.Count, settings.Sources);
+                            bridge_state_.UpdateSources(settings.UpdateRateMs, activeMappings.Count, settings.Sources);
                         }
 
                         Stopwatch cycleTimer = Stopwatch.StartNew();
@@ -151,8 +154,9 @@ public sealed class BridgeWorker : BackgroundService
                 continue;
             }
 
-            IReadOnlyList<TagMapping> sourceMappings = sourceMappingCache.GetMappings(source.SourceId);
-            pollTasks.Add(PollSourceAsync(source, session, sourceMappings, concurrencyGate, cancellationToken));
+            IReadOnlyList<TagMapping> sourceReadMappings = sourceMappingCache.GetSourceReadMappings(source.SourceId);
+            IReadOnlyList<TagMapping> manualMappings = sourceMappingCache.GetManualMappings(source.SourceId);
+            pollTasks.Add(PollSourceAsync(source, session, sourceReadMappings, manualMappings, concurrencyGate, cancellationToken));
         }
 
         SourcePollResult[] results = await Task.WhenAll(pollTasks).ConfigureAwait(false);
@@ -162,28 +166,35 @@ public sealed class BridgeWorker : BackgroundService
     private async Task<SourcePollResult> PollSourceAsync(
         DaSourceRuntimeSettings source,
         SourceSession session,
-        IReadOnlyList<TagMapping> sourceMappings,
+        IReadOnlyList<TagMapping> sourceReadMappings,
+        IReadOnlyList<TagMapping> manualMappings,
         SemaphoreSlim concurrencyGate,
         CancellationToken cancellationToken)
     {
         await concurrencyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        int outputValueCount = 0;
+        bool sourceReadSucceeded = false;
 
         try
         {
             bridge_state_.SetSourceConnectionState(source.SourceId, "Connected");
             Stopwatch readTimer = Stopwatch.StartNew();
             IReadOnlyList<BridgeValue> values = await Task
-                .Run(async () => await session.Client.ReadAsync(sourceMappings, cancellationToken).ConfigureAwait(false), cancellationToken)
+                .Run(async () => await session.Client.ReadAsync(sourceReadMappings, cancellationToken).ConfigureAwait(false), cancellationToken)
                 .ConfigureAwait(false);
 
             readTimer.Stop();
             bridge_state_.UpdateDaRead(source.SourceId, values, readTimer.Elapsed);
             for (int valueIndex = 0; valueIndex < values.Count; valueIndex++)
             {
-                ua_server_.UpdateValue(values[valueIndex]);
+                BridgeValue value = values[valueIndex];
+                bridge_state_.SetValue(value);
+                ua_server_.UpdateValue(value);
+                outputValueCount++;
             }
 
-            return SourcePollResult.Success(source.SourceId, values.Count);
+            sourceReadSucceeded = true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -192,13 +203,44 @@ public sealed class BridgeWorker : BackgroundService
         catch (Exception exception)
         {
             bridge_state_.SetSourceError(source.SourceId, exception);
-            bridge_state_.ClearSourceValues(source.SourceId);
+            ClearReadValues(sourceReadMappings);
             logger_.LogWarning(exception, "Source {SourceId} read failed", source.SourceId);
-            return SourcePollResult.Failure(source.SourceId);
         }
-        finally
+
+        outputValueCount += ApplyManualMappings(manualMappings);
+
+        return sourceReadSucceeded
+            ? SourcePollResult.Success(source.SourceId, outputValueCount)
+            : SourcePollResult.Failure(source.SourceId, outputValueCount);
+    }
+
+    private int ApplyManualMappings(IReadOnlyList<TagMapping> manualMappings)
+    {
+        int updatedCount = 0;
+
+        for (int i = 0; i < manualMappings.Count; i++)
         {
-            concurrencyGate.Release();
+            TagMapping mapping = manualMappings[i];
+            if (!TryCreateManualValue(mapping, out BridgeValue manualValue))
+            {
+                bridge_state_.ClearValue(mapping.SourceId, mapping.DaItemId);
+                continue;
+            }
+
+            bridge_state_.SetValue(manualValue);
+            ua_server_.UpdateValue(manualValue);
+            updatedCount++;
+        }
+
+        return updatedCount;
+    }
+
+    private void ClearReadValues(IReadOnlyList<TagMapping> readMappings)
+    {
+        for (int i = 0; i < readMappings.Count; i++)
+        {
+            TagMapping mapping = readMappings[i];
+            bridge_state_.ClearValue(mapping.SourceId, mapping.DaItemId);
         }
     }
 
@@ -263,19 +305,197 @@ public sealed class BridgeWorker : BackgroundService
         }
     }
 
+    private static bool TryCreateManualValue(TagMapping mapping, out BridgeValue value)
+    {
+        if (TryConvertManualValue(mapping.DataType, mapping.ManualValue, out object? convertedValue))
+        {
+            value = new BridgeValue(
+                mapping.SourceId,
+                mapping.DaItemId,
+                convertedValue,
+                DateTime.UtcNow,
+                192,
+                true);
+            return true;
+        }
+
+        value = new BridgeValue(mapping.SourceId, mapping.DaItemId, null, DateTime.UtcNow, 0, false);
+        return false;
+    }
+
+    private static bool TryConvertManualValue(string dataType, string? manualValue, out object? convertedValue)
+    {
+        string text = manualValue?.Trim() ?? string.Empty;
+        string normalizedDataType = dataType.Trim().ToUpperInvariant();
+
+        if (normalizedDataType is "STRING")
+        {
+            convertedValue = text;
+            return true;
+        }
+
+        if (normalizedDataType is "BOOL" or "BOOLEAN")
+        {
+            if (bool.TryParse(text, out bool boolValue))
+            {
+                convertedValue = boolValue;
+                return true;
+            }
+
+            if (text == "1")
+            {
+                convertedValue = true;
+                return true;
+            }
+
+            if (text == "0")
+            {
+                convertedValue = false;
+                return true;
+            }
+
+            convertedValue = null;
+            return false;
+        }
+
+        if (normalizedDataType is "BYTE")
+        {
+            if (byte.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out byte byteValue))
+            {
+                convertedValue = byteValue;
+                return true;
+            }
+        }
+        else if (normalizedDataType is "SBYTE")
+        {
+            if (sbyte.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out sbyte sbyteValue))
+            {
+                convertedValue = sbyteValue;
+                return true;
+            }
+        }
+        else if (normalizedDataType is "INT16" or "SHORT")
+        {
+            if (short.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out short shortValue))
+            {
+                convertedValue = shortValue;
+                return true;
+            }
+        }
+        else if (normalizedDataType is "UINT16")
+        {
+            if (ushort.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out ushort ushortValue))
+            {
+                convertedValue = ushortValue;
+                return true;
+            }
+        }
+        else if (normalizedDataType is "INT32" or "INT")
+        {
+            if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int intValue))
+            {
+                convertedValue = intValue;
+                return true;
+            }
+        }
+        else if (normalizedDataType is "UINT32")
+        {
+            if (uint.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out uint uintValue))
+            {
+                convertedValue = uintValue;
+                return true;
+            }
+        }
+        else if (normalizedDataType is "INT64" or "LONG")
+        {
+            if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long longValue))
+            {
+                convertedValue = longValue;
+                return true;
+            }
+        }
+        else if (normalizedDataType is "UINT64")
+        {
+            if (ulong.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out ulong ulongValue))
+            {
+                convertedValue = ulongValue;
+                return true;
+            }
+        }
+        else if (normalizedDataType is "FLOAT" or "SINGLE")
+        {
+            if (float.TryParse(text, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out float floatValue))
+            {
+                convertedValue = floatValue;
+                return true;
+            }
+        }
+        else if (normalizedDataType is "DOUBLE" or "REAL8")
+        {
+            if (double.TryParse(text, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out double doubleValue))
+            {
+                convertedValue = doubleValue;
+                return true;
+            }
+        }
+        else if (normalizedDataType is "DECIMAL")
+        {
+            if (decimal.TryParse(text, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out decimal decimalValue))
+            {
+                convertedValue = decimalValue;
+                return true;
+            }
+        }
+        else if (TryInferManualValue(text, out object? inferredValue))
+        {
+            convertedValue = inferredValue;
+            return true;
+        }
+
+        convertedValue = null;
+        return false;
+    }
+
+    private static bool TryInferManualValue(string text, out object? convertedValue)
+    {
+        if (bool.TryParse(text, out bool boolValue))
+        {
+            convertedValue = boolValue;
+            return true;
+        }
+
+        if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long longValue))
+        {
+            convertedValue = longValue;
+            return true;
+        }
+
+        if (double.TryParse(text, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out double doubleValue))
+        {
+            convertedValue = doubleValue;
+            return true;
+        }
+
+        convertedValue = text;
+        return true;
+    }
+
     private sealed class SourceMappingCache
     {
         private static readonly IReadOnlyList<TagMapping> EmptyMappings = Array.Empty<TagMapping>();
-        private readonly Dictionary<string, IReadOnlyList<TagMapping>> mappings_by_source_;
+        private readonly Dictionary<string, SourceMappingSet> mappings_by_source_;
+        private readonly IReadOnlyList<TagMapping> active_mappings_;
 
-        private SourceMappingCache(Dictionary<string, IReadOnlyList<TagMapping>> mappingsBySource)
+        private SourceMappingCache(Dictionary<string, SourceMappingSet> mappingsBySource, IReadOnlyList<TagMapping> activeMappings)
         {
             mappings_by_source_ = mappingsBySource;
+            active_mappings_ = activeMappings;
         }
 
         public static SourceMappingCache Build(IReadOnlyList<TagMapping> mappings)
         {
             Dictionary<string, List<TagMapping>> groupedMappings = new(StringComparer.OrdinalIgnoreCase);
+            List<TagMapping> activeMappings = new(mappings.Count);
 
             for (int i = 0; i < mappings.Count; i++)
             {
@@ -287,35 +507,68 @@ public sealed class BridgeWorker : BackgroundService
                 }
 
                 sourceMappings.Add(mapping);
+                if (mapping.Enabled)
+                {
+                    activeMappings.Add(mapping);
+                }
             }
 
-            Dictionary<string, IReadOnlyList<TagMapping>> frozenMappings = new(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, SourceMappingSet> frozenMappings = new(StringComparer.OrdinalIgnoreCase);
             foreach ((string sourceId, List<TagMapping> sourceMappings) in groupedMappings)
             {
-                frozenMappings[sourceId] = sourceMappings.ToArray();
+                TagMapping[] all = sourceMappings.ToArray();
+                TagMapping[] active = sourceMappings.Where(mapping => mapping.Enabled).ToArray();
+                TagMapping[] sourceRead = active.Where(mapping => string.Equals(mapping.Mode, TagMode.Source, StringComparison.OrdinalIgnoreCase)).ToArray();
+                TagMapping[] manual = active.Where(mapping => string.Equals(mapping.Mode, TagMode.Manual, StringComparison.OrdinalIgnoreCase)).ToArray();
+                frozenMappings[sourceId] = new SourceMappingSet(all, active, sourceRead, manual);
             }
 
-            return new SourceMappingCache(frozenMappings);
+            return new SourceMappingCache(frozenMappings, activeMappings.ToArray());
+        }
+
+        public IReadOnlyList<TagMapping> GetActiveMappings()
+        {
+            return active_mappings_;
         }
 
         public IReadOnlyList<TagMapping> GetMappings(string sourceId)
         {
-            return mappings_by_source_.TryGetValue(sourceId, out IReadOnlyList<TagMapping>? mappings)
-                ? mappings
+            return mappings_by_source_.TryGetValue(sourceId, out SourceMappingSet? mappings)
+                ? mappings.All
+                : EmptyMappings;
+        }
+
+        public IReadOnlyList<TagMapping> GetSourceReadMappings(string sourceId)
+        {
+            return mappings_by_source_.TryGetValue(sourceId, out SourceMappingSet? mappings)
+                ? mappings.SourceRead
+                : EmptyMappings;
+        }
+
+        public IReadOnlyList<TagMapping> GetManualMappings(string sourceId)
+        {
+            return mappings_by_source_.TryGetValue(sourceId, out SourceMappingSet? mappings)
+                ? mappings.Manual
                 : EmptyMappings;
         }
     }
 
-    private sealed record SourcePollResult(string SourceId, bool IsSuccess, int ValueCount)
+    private sealed record SourceMappingSet(
+        IReadOnlyList<TagMapping> All,
+        IReadOnlyList<TagMapping> Active,
+        IReadOnlyList<TagMapping> SourceRead,
+        IReadOnlyList<TagMapping> Manual);
+
+    private sealed record SourcePollResult(string SourceId, bool ReadSucceeded, int OutputValueCount)
     {
-        public static SourcePollResult Success(string sourceId, int valueCount)
+        public static SourcePollResult Success(string sourceId, int outputValueCount)
         {
-            return new SourcePollResult(sourceId, true, valueCount);
+            return new SourcePollResult(sourceId, true, outputValueCount);
         }
 
-        public static SourcePollResult Failure(string sourceId)
+        public static SourcePollResult Failure(string sourceId, int outputValueCount)
         {
-            return new SourcePollResult(sourceId, false, 0);
+            return new SourcePollResult(sourceId, false, outputValueCount);
         }
     }
 
@@ -330,12 +583,10 @@ public sealed class BridgeWorker : BackgroundService
             for (int i = 0; i < results.Count; i++)
             {
                 SourcePollResult result = results[i];
-                if (result.IsSuccess)
-                {
-                    totalValueCount += result.ValueCount;
-                    anySuccess = true;
-                }
-                else
+                totalValueCount += result.OutputValueCount;
+                anySuccess |= result.ReadSucceeded || result.OutputValueCount > 0;
+
+                if (!result.ReadSucceeded)
                 {
                     failedSourceIds.Add(result.SourceId);
                 }
@@ -344,6 +595,8 @@ public sealed class BridgeWorker : BackgroundService
             return new SourcePollSummary(totalValueCount, anySuccess, failedSourceIds);
         }
     }
+
+
 
     private sealed record SourceSession(DaSourceRuntimeSettings Source, IDaClient Client);
 }

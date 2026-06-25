@@ -218,10 +218,39 @@ app.MapPost("/api/mappings/add", (MappingAddRequest request, MappingStore store)
             DaItemId = tag.DaItemId,
             DisplayName = tag.DisplayName ?? string.Empty,
             DataType = tag.DataType ?? "Auto",
-            UaNodeId = tag.UaNodeId ?? string.Empty
+            UaNodeId = tag.UaNodeId ?? string.Empty,
+            Enabled = tag.Enabled ?? true,
+            Mode = string.IsNullOrWhiteSpace(tag.Mode) ? TagMode.Source : tag.Mode,
+            ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue
         });
 
     long version = store.Add(tags);
+    return Results.Json(new { version });
+});
+app.MapPost("/api/mappings/update", (MappingUpdateRequest request, MappingStore store) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Tag.SourceId) || string.IsNullOrWhiteSpace(request.Tag.DaItemId))
+    {
+        return Results.BadRequest(new { error = "Source ID and DA Item ID are required." });
+    }
+
+    TagMapping tag = new()
+    {
+        SourceId = request.Tag.SourceId,
+        DaItemId = request.Tag.DaItemId,
+        DisplayName = request.Tag.DisplayName ?? string.Empty,
+        DataType = request.Tag.DataType ?? "Auto",
+        UaNodeId = request.Tag.UaNodeId ?? string.Empty,
+        Enabled = request.Tag.Enabled ?? true,
+        Mode = string.IsNullOrWhiteSpace(request.Tag.Mode) ? TagMode.Source : request.Tag.Mode,
+        ManualValue = string.IsNullOrWhiteSpace(request.Tag.ManualValue) ? null : request.Tag.ManualValue
+    };
+
+    if (!store.TryUpdate(tag, out long version))
+    {
+        return Results.NotFound(new { error = "Mapping not found." });
+    }
+
     return Results.Json(new { version });
 });
 app.MapPost("/api/mappings/remove", (MappingRemoveRequest request, MappingStore store) =>

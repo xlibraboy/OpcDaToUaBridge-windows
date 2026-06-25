@@ -1,5 +1,6 @@
 @echo off
 set REPO_ROOT=%~dp0\..\..
+set DOTNET_EXE=%USERPROFILE%\AppData\Local\Microsoft\dotnet\dotnet.exe
 pushd "%REPO_ROOT%\publish"
-"%REPO_ROOT%\publish\OpcBridge.App.exe" 1>> "%REPO_ROOT%\publish\bridge-task-stdout.log" 2>> "%REPO_ROOT%\publish\bridge-task-stderr.log"
+"%DOTNET_EXE%" "%REPO_ROOT%\publish\OpcBridge.App.dll" 1>> "%REPO_ROOT%\publish\bridge-task-stdout.log" 2>> "%REPO_ROOT%\publish\bridge-task-stderr.log"
 popd

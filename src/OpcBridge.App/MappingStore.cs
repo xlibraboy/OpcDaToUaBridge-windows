@@ -66,6 +66,28 @@ public sealed class MappingStore
             return version_;
         }
     }
+    public bool TryUpdate(TagMapping tag, out long version)
+    {
+        lock (sync_)
+        {
+            TagMapping normalized = Normalize(tag);
+            int index = mappings_.FindIndex(mapping =>
+                string.Equals(mapping.SourceId, normalized.SourceId, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(mapping.DaItemId, normalized.DaItemId, StringComparison.OrdinalIgnoreCase));
+
+            if (index < 0)
+            {
+                version = version_;
+                return false;
+            }
+
+            mappings_[index] = normalized;
+            version_++;
+            Persist();
+            version = version_;
+            return true;
+        }
+    }
 
     public long Remove(string sourceId, string daItemId)
     {
@@ -152,7 +174,10 @@ public sealed class MappingStore
             DaItemId = itemId,
             UaNodeId = string.IsNullOrWhiteSpace(tag.UaNodeId) ? defaultNodeId : tag.UaNodeId.Trim(),
             DisplayName = string.IsNullOrWhiteSpace(tag.DisplayName) ? itemId : tag.DisplayName.Trim(),
-            DataType = string.IsNullOrWhiteSpace(tag.DataType) ? "Auto" : tag.DataType.Trim()
+            DataType = string.IsNullOrWhiteSpace(tag.DataType) ? "Auto" : tag.DataType.Trim(),
+            Enabled = tag.Enabled,
+            Mode = NormalizeMode(tag.Mode),
+            ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue.Trim()
         };
     }
 
@@ -161,6 +186,14 @@ public sealed class MappingStore
         string value = sourceId?.Trim() ?? string.Empty;
         return value.Length == 0 ? DaRuntimeSettings.DefaultSourceId : value;
     }
+
+    private static string NormalizeMode(string? mode)
+    {
+        return string.Equals(mode?.Trim(), TagMode.Manual, StringComparison.OrdinalIgnoreCase)
+            ? TagMode.Manual
+            : TagMode.Source;
+    }
+
 
     private void Persist()
     {

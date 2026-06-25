@@ -80,10 +80,50 @@ internal static class DashboardPage
         .btn { display: inline-flex; align-items: center; gap: 6px; background: var(--accent); color: #07121a; border: none; border-radius: 5px; padding: 6px 13px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
         .btn.ghost { background: var(--panel2); color: var(--text); border: 1px solid var(--border2); }
         .hint, .msg { font-size: 12px; color: var(--muted); }
-        .list { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }
+        .list { display: flex; flex-direction: column; gap: 4px; max-height: 380px; overflow-y: auto; }
+        .breadcrumb { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; padding: 6px 10px; background: var(--bg); border: 1px solid var(--border2); border-radius: 5px; font-size: 12px; min-height: 32px; }
+        .breadcrumb a { color: var(--accent); cursor: pointer; text-decoration: none; }
+        .breadcrumb a:hover { text-decoration: underline; }
+        .breadcrumb .sep { color: var(--muted); }
+        .breadcrumb .current { color: var(--text); font-weight: 600; }
+        .tag-browser-toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+        .tag-browser-toolbar .msg { flex: 1; }
+        .li .icon { font-size: 14px; flex-shrink: 0; width: 18px; text-align: center; }
+        .li .icon.folder { color: var(--warn); }
+        .li .icon.tag { color: var(--accent); }
+        .li .icon.mapped { color: var(--good); }
+        .li .li-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+        .li .mapped-badge { font-size: 10px; color: var(--good); background: rgba(52,211,153,.12); padding: 1px 7px; border-radius: 10px; font-weight: 600; }
+        .add-mapping-box { background: var(--bg); border: 1px solid var(--border2); border-radius: 5px; padding: 10px 12px; margin-bottom: 10px; }
+        .add-mapping-box .field { margin-bottom: 8px; }
+        .add-mapping-box .field:last-child { margin-bottom: 0; }
         .li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 5px; border: 1px solid var(--border); background: var(--panel2); }
         .li .n { font-size: 13px; font-weight: 600; }
         .li .p { font-size: 11px; color: var(--muted); font-family: 'Consolas', monospace; }
+        .li.clickable { cursor: pointer; }
+        .li.clickable:hover { border-color: var(--accent); }
+        .li .li-badge { margin-left: auto; }
+        .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 1000; justify-content: center; align-items: center; }
+        .modal-overlay.open { display: flex; }
+        .modal { background: var(--panel); border: 1px solid var(--border2); border-radius: 8px; width: min(560px, 92vw); max-height: 90vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+        .modal-h { display: flex; align-items: start; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+        .modal-h .n { font-size: 15px; font-weight: 700; }
+        .modal-h .p { font-size: 11px; color: var(--muted); font-family: 'Consolas', monospace; margin-top: 4px; }
+        .modal-close { background: none; border: none; color: var(--muted); font-size: 20px; cursor: pointer; padding: 0 4px; line-height: 1; }
+        .modal-close:hover { color: var(--text); }
+        .modal-b { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+        .fp-body { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        @media (max-width: 520px) { .fp-body { grid-template-columns: 1fr; } }
+        .fp-panel { background: var(--bg); border: 1px solid var(--border2); border-radius: 6px; padding: 12px 13px; }
+        .fp-k { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 7px; }
+        .fp-v { font-size: 22px; font-weight: 700; line-height: 1.1; word-break: break-word; }
+        .fp-meta { margin-top: 10px; color: var(--muted); font-size: 11px; display: flex; flex-direction: column; gap: 5px; }
+        .fp-input { width: 100%; min-width: 0; font-size: 16px; }
+        .fp-hint { margin-top: 7px; color: var(--muted); font-size: 11px; }
+        .modal-f { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 12px 16px; border-top: 1px solid var(--border); }
+        .modal-f .field { margin-bottom: 0; flex: 1; min-width: 200px; }
+        .modal-f .btn { margin-left: auto; }
+        .modal-f .btn + .btn { margin-left: 0; }
         .endpoint { background: var(--bg); border: 1px solid var(--border2); border-radius: 5px; padding: 7px 11px; font-family: 'Consolas', monospace; font-size: 12px; color: var(--accent); word-break: break-all; }
         .split { display: grid; grid-template-columns: 1.2fr 1fr; gap: 12px; }
         .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -199,32 +239,61 @@ internal static class DashboardPage
     </div>
 </div>
 <div class="view" id="view-tags">
-    <div class="grid2">
-        <div class="box">
-            <div class="box-h">Tag Browser</div>
-            <div class="box-b">
-                <div class="toolbar">
-                    <button class="btn" id="btnBrowseAllTags" type="button">Browse All Tags</button>
-                    <button class="btn ghost" id="btnBrowseTags" type="button">Browse Folders</button>
-                    <span class="msg" id="tagBreadcrumb">Browse all tags, or open folders one level at a time.</span>
+    <div class="box" style="margin-bottom:14px">
+        <div class="box-h">Tag Browser</div>
+        <div class="box-b">
+            <div class="tag-browser-toolbar">
+                <button class="btn" id="btnBrowseAllTags" type="button">Browse All Tags</button>
+                <button class="btn ghost" id="btnBrowseTags" type="button">Browse Folders</button>
+                <span class="msg" id="tagStatus">Browse all tags, or open folders one level at a time.</span>
+            </div>
+            <div class="breadcrumb" id="tagBreadcrumb"></div>
+            <div class="list" id="tagTree"></div>
+        </div>
+    </div>
+    <div class="box">
+        <div class="box-h">DA → OPC UA Mappings <span class="msg" id="mapCount" style="margin-left:auto"></span></div>
+        <div class="box-b">
+            <div class="field">
+                <label class="fl">DA Source</label>
+                <select id="mapSourceSelect"></select>
+            </div>
+            <div class="add-mapping-box">
+                <div class="field">
+                    <input id="manualItem" type="text" placeholder="DA Item ID (e.g. Random.Real8)" style="flex:1">
+                    <input id="manualUaNodeId" type="text" placeholder="UA NodeId (optional)" style="flex:1">
                 </div>
-                <div class="list" id="tagTree"></div>
+                <div class="field" style="margin-bottom:0">
+                    <button class="btn" type="button" id="manualAdd">Add Mapping</button>
+                    <span class="msg">Or browse tags above and click Add.</span>
+                </div>
+            </div>
+            <div class="hint" id="mappingMessage" style="margin-bottom:10px">Click a tag to open its faceplate. Disable a tag to stop publishing it, or set a manual value to override the DA source.</div>
+            <div class="list" id="mappedList"></div>
+        </div>
+    </div>
+</div>
+<div class="modal-overlay" id="faceplateOverlay" onclick="if(event.target===this)closeFaceplate()">
+    <div class="modal">
+        <div class="modal-h">
+            <div><div class="n" id="fpName"></div><div class="p" id="fpSub"></div></div>
+            <button class="modal-close" type="button" onclick="closeFaceplate()">&times;</button>
+        </div>
+        <div class="modal-b">
+            <div class="fp-body">
+                <div class="fp-panel" id="fpLivePanel"></div>
+                <div class="fp-panel">
+                    <div class="fp-k">Manual override</div>
+                    <input class="fp-input" id="fpManualInput" data-action="tag-manual-value" type="text" disabled>
+                    <div class="fp-hint" id="fpModeHint"></div>
+                </div>
             </div>
         </div>
-        <div class="box">
-            <div class="box-h">DA → OPC UA Mappings <span class="msg" id="mapCount" style="margin-left:auto"></span></div>
-            <div class="box-b">
-                <div class="field">
-                    <label class="fl">DA Source</label>
-                    <select id="mapSourceSelect"></select>
-                </div>
-                <div class="field" style="margin-bottom:8px">
-                    <input id="manualItem" type="text" placeholder="DA Item ID" style="flex:1">
-                    <input id="manualUaNodeId" type="text" placeholder="OPC UA NodeId (optional)" style="flex:1">
-                    <button class="btn ghost" type="button" id="manualAdd">Add Mapping</button>
-                </div>
-                <div class="list" id="mappedList"></div>
-            </div>
+        <div class="modal-f">
+            <div class="field"><label class="fl" style="width:auto">Enabled</label><input type="checkbox" id="fpEnabled" data-action="toggle-tag-enabled"></div>
+            <div class="field"><label class="fl" style="width:auto">Mode</label><select id="fpMode" data-action="tag-mode"><option value="Source">Source</option><option value="Manual">Manual</option></select></div>
+            <button class="btn ghost" type="button" id="fpApply" data-action="save-tag">Apply</button>
+            <button class="btn ghost" type="button" id="fpRemove" data-action="remove-mapping">Remove</button>
         </div>
     </div>
 </div>
@@ -313,8 +382,92 @@ const state = {
     lastValueCount: 0,
     updateRateMs: 1000,
     logsLoaded: false,
-    appInfoLoaded: false
+    appInfoLoaded: false,
+    mappings: [],
+    valuesByKey: new Map()
 };
+
+function valueKey(sourceId, itemId) {
+    return (sourceId || 'default') + '\u0000' + (itemId || '');
+}
+
+function currentValue(sourceId, itemId) {
+    return state.valuesByKey.get(valueKey(sourceId, itemId)) || null;
+}
+
+function renderLiveValue(value) {
+    if (!value) return '<span class="msg">No live value</span>';
+    const text = String(get(value, 'value') ?? '');
+    const quality = get(value, 'daQuality');
+    const isGood = !!get(value, 'isGood');
+    const timestamp = locTime(get(value, 'timestampUtc'));
+    return `<div class="fp-k">Real value</div><div class="fp-v mono" title="${attr(text)}">${esc(text)}</div><div class="fp-meta"><span>${badge(isGood ? 'Good' : 'Bad', isGood ? 'good' : 'bad')} <span class="${isGood ? 'good' : 'bad'}">(${esc(String(quality ?? '—'))})</span></span><span class="timestamp">${esc(timestamp)}</span></div>`;
+}
+
+function renderMappingRow(mapping) {
+    const sourceId = mapping.sourceId || mapping.SourceId || 'default';
+    const item = mapping.daItemId || mapping.DaItemId;
+    const name = mapping.displayName || mapping.DisplayName || item;
+    const node = mapping.uaNodeId || mapping.UaNodeId || defaultUaNodeId(sourceId, item);
+    const mode = mapping.mode || mapping.Mode || 'Source';
+    const enabled = (mapping.enabled ?? mapping.Enabled) !== false;
+    const modeBadge = mode === 'Manual' ? badge('Manual', 'warn') : (enabled ? badge('Source', 'good') : badge('Disabled', 'bad'));
+    return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}"><div style="flex:1"><div class="n">${esc(name)}</div><div class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</div></div><div class="li-badge">${modeBadge}</div></div>`;
+}
+
+function renderMappingRows(mappings) {
+    return mappings.length ? mappings.map(renderMappingRow).join('') : '<span class="msg">No DA → OPC UA mappings.</span>';
+}
+
+let faceplateOpen = false;
+let faceplateKey = null;
+
+function openFaceplate(sourceId, itemId) {
+    const mapping = getMapping(sourceId, itemId);
+    if (!mapping) return;
+    faceplateOpen = true;
+    faceplateKey = valueKey(sourceId, itemId);
+    const name = mapping.displayName || mapping.DisplayName || itemId;
+    const node = mapping.uaNodeId || mapping.UaNodeId || defaultUaNodeId(sourceId, itemId);
+    const mode = mapping.mode || mapping.Mode || 'Source';
+    const enabled = (mapping.enabled ?? mapping.Enabled) !== false;
+    const manualValue = mapping.manualValue ?? mapping.ManualValue ?? '';
+    el('fpName').textContent = name;
+    el('fpSub').textContent = sourceId + ' · ' + itemId + ' · UA: ' + node;
+    el('fpEnabled').checked = enabled;
+    el('fpMode').value = mode;
+    el('fpManualInput').value = String(manualValue ?? '');
+    el('fpManualInput').disabled = mode !== 'Manual';
+    el('fpModeHint').textContent = 'Mode ' + mode;
+    el('fpApply').dataset.sourceId = sourceId;
+    el('fpApply').dataset.itemId = itemId;
+    el('fpRemove').dataset.sourceId = sourceId;
+    el('fpRemove').dataset.itemId = itemId;
+    el('fpEnabled').dataset.sourceId = sourceId;
+    el('fpEnabled').dataset.itemId = itemId;
+    el('fpLivePanel').innerHTML = renderLiveValue(currentValue(sourceId, itemId));
+    el('faceplateOverlay').classList.add('open');
+}
+
+function closeFaceplate() {
+    faceplateOpen = false;
+    faceplateKey = null;
+    el('faceplateOverlay').classList.remove('open');
+}
+
+function updateFaceplateLiveValues() {
+    if (!faceplateOpen || !faceplateKey) return;
+    const parts = faceplateKey.split('\u0000');
+    el('fpLivePanel').innerHTML = renderLiveValue(currentValue(parts[0] || 'default', parts[1] || ''));
+}
+
+function updateManualInputState() {
+    const modeSelect = el('fpMode');
+    const manualInput = el('fpManualInput');
+    if (!modeSelect || !manualInput) return;
+    manualInput.disabled = modeSelect.value !== 'Manual';
+    el('fpModeHint').textContent = 'Mode ' + modeSelect.value;
+}
 
 function showTab(name) {
     document.querySelectorAll('.tabbtn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
@@ -498,6 +651,8 @@ async function refresh() {
         const pollSaturation = formatPollSaturation(get(b, 'lastPollDurationMs'), updateRateMs);
         const pollUtilization = formatPollUtilization(get(b, 'lastPollDurationMs'), updateRateMs);
         state.updateRateMs = updateRateMs;
+        state.valuesByKey = new Map(vs.map(v => [valueKey(get(v, 'sourceId') || 'default', get(v, 'daItemId')), v]));
+        updateFaceplateLiveValues();
         el('updateRate').textContent = updateRateMs + ' ms';
         el('pollUtilizationFill').style.width = pollUtilization.width;
         el('pollUtilizationFill').className = pollUtilization.className;
@@ -536,14 +691,45 @@ async function refresh() {
 async function loadMappings() {
     const p = await (await fetch('/api/mappings', { cache: 'no-store' })).json();
     const mappings = p.mappings || [];
+    state.mappings = mappings;
     el('mapCount').textContent = mappings.length + ' mappings';
-    el('mappedList').innerHTML = mappings.length ? mappings.map(t => {
-        const sourceId = t.sourceId || t.SourceId || 'default';
-        const item = t.daItemId || t.DaItemId;
-        const name = t.displayName || t.DisplayName || item;
-        const node = t.uaNodeId || t.UaNodeId || defaultUaNodeId(sourceId, item);
-        return `<div class="li"><div style="flex:1"><div class="n">${esc(name)}</div><div class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</div></div><button class="btn ghost" data-action="remove-mapping" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">Remove</button></div>`;
-    }).join('') : '<span class="msg">No DA → OPC UA mappings.</span>';
+    el('mappedList').innerHTML = renderMappingRows(mappings);
+}
+
+function getMapping(sourceId, itemId) {
+    return state.mappings.find(mapping => {
+        const mappingSourceId = mapping.sourceId || mapping.SourceId || 'default';
+        const mappingItemId = mapping.daItemId || mapping.DaItemId;
+        return mappingSourceId === sourceId && mappingItemId === itemId;
+    }) || null;
+}
+
+
+
+async function updateMapping(sourceId, itemId, mutate) {
+    const mapping = getMapping(sourceId, itemId);
+    if (!mapping) throw new Error('Mapping not found.');
+    const payload = {
+        sourceId,
+        daItemId: itemId,
+        displayName: mapping.displayName || mapping.DisplayName || itemId,
+        dataType: mapping.dataType || mapping.DataType || 'Auto',
+        uaNodeId: mapping.uaNodeId || mapping.UaNodeId || defaultUaNodeId(sourceId, itemId),
+        enabled: (mapping.enabled ?? mapping.Enabled) !== false,
+        mode: mapping.mode || mapping.Mode || 'Source',
+        manualValue: mapping.manualValue ?? mapping.ManualValue ?? null
+    };
+    mutate(payload);
+    const r = await fetch('/api/mappings/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tag: payload })
+    });
+    const p = await r.json();
+    if (!r.ok) throw new Error(p.error || ('HTTP ' + r.status));
+    await loadMappings();
+    await refresh();
+    el('mappingMessage').textContent = 'Mapping updated.';
 }
 
 function pickSource(sourceId) {
@@ -551,6 +737,7 @@ function pickSource(sourceId) {
     state.editingNewSource = false;
     state.tagPath = '';
     el('tagTree').innerHTML = '<span class="msg">Browse the active source to load tags.</span>';
+    el('tagStatus').textContent = 'Browse all tags, or open folders one level at a time.';
     renderCrumb();
     renderSources();
 }
@@ -646,17 +833,35 @@ function pickServer(progId, host) {
     el('cfgMessage').textContent = 'Selected server; save source to apply.';
 }
 function renderCrumb() {
-    el('tagBreadcrumb').textContent = state.tagPath || 'root';
+    const bc = el('tagBreadcrumb');
+    if (!state.tagPath) {
+        bc.innerHTML = '<span class="current">root</span>';
+        return;
+    }
+    const parts = state.tagPath.split('.');
+    let html = '<a data-crumb="">root</a><span class="sep">/</span>';
+    let acc = '';
+    for (let i = 0; i < parts.length; i++) {
+        acc = acc ? acc + '.' + parts[i] : parts[i];
+        if (i < parts.length - 1) {
+            html += `<a data-crumb="${attr(acc)}">${esc(parts[i])}</a><span class="sep">/</span>`;
+        } else {
+            html += `<span class="current">${esc(parts[i])}</span>`;
+        }
+    }
+    bc.innerHTML = html;
 }
 async function browseTags(path, recursive = false) {
     const source = currentSource();
     if (!source || state.editingNewSource) {
-        el('tagTree').innerHTML = '<span class="bad">Save or select a source before browsing tags.</span>';
+        el('tagTree').innerHTML = '<span class="msg">Select or save a source before browsing tags.</span>';
+        el('tagBreadcrumb').innerHTML = '';
         return;
     }
     state.tagPath = path || '';
     renderCrumb();
     el('tagTree').innerHTML = '<span class="msg">Browsing…</span>';
+    el('tagStatus').textContent = recursive ? 'Loading all tags…' : 'Loading folder…';
     const body = {
         sourceId: source.sourceId,
         progId: source.progId,
@@ -671,17 +876,24 @@ async function browseTags(path, recursive = false) {
     if (p.error) throw new Error(p.error);
     const branches = p.branches || [];
     const tags = p.tags || [];
+    const mappedKeys = new Set((state.mappings || []).map(m => valueKey(m.sourceId || m.SourceId || 'default', m.daItemId || m.DaItemId)));
     const rows = [];
+    if (state.tagPath) {
+        const parent = state.tagPath.includes('.') ? state.tagPath.substring(0, state.tagPath.lastIndexOf('.')) : '';
+        rows.push(`<div class="li clickable" data-action="open-branch" data-path="${attr(parent)}"><span class="icon folder">&#9650;</span><div style="flex:1"><div class="n">..</div><div class="p">Up one level</div></div></div>`);
+    }
     for (const branch of branches) {
         const child = state.tagPath ? state.tagPath + '.' + branch : branch;
-        rows.push(`<div class="li"><div style="flex:1"><div class="n">${esc(branch)}</div><div class="p">branch</div></div><button class="btn ghost" data-action="open-branch" data-path="${attr(child)}">Open</button></div>`);
+        rows.push(`<div class="li clickable" data-action="open-branch" data-path="${attr(child)}"><span class="icon folder">&#128193;</span><div style="flex:1"><div class="n">${esc(branch)}</div><div class="p">folder</div></div></div>`);
     }
     for (const tag of tags) {
         const itemId = tag.itemId || tag.ItemId;
         const name = tag.name || tag.Name || itemId;
-        rows.push(`<div class="li"><div style="flex:1"><div class="n">${esc(name)}</div><div class="p">${esc(itemId)}</div></div><button class="btn ghost" data-action="add-tag" data-source-id="${attr(source.sourceId)}" data-item-id="${attr(itemId)}" data-name="${attr(name)}">Add</button></div>`);
+        const isMapped = mappedKeys.has(valueKey(source.sourceId, itemId));
+        rows.push(`<div class="li"><span class="icon tag">&#9878;</span><div style="flex:1"><div class="n">${esc(name)}</div><div class="p">${esc(itemId)}</div></div><div class="li-actions">${isMapped ? '<span class="mapped-badge">Mapped</span>' : ''}<button class="btn ghost" data-action="add-tag" data-source-id="${attr(source.sourceId)}" data-item-id="${attr(itemId)}" data-name="${attr(name)}">Add</button></div></div>`);
     }
-    el('tagTree').innerHTML = rows.length ? rows.join('') : '<span class="msg">Empty.</span>';
+    el('tagTree').innerHTML = rows.length ? rows.join('') : '<span class="msg">No tags or folders here.</span>';
+    el('tagStatus').textContent = branches.length + ' folders · ' + tags.length + ' tags';
 }
 async function addTag(sourceId, itemId, name) {
     await fetch('/api/mappings/add', {
@@ -741,20 +953,68 @@ function bindDynamicButtons() {
         pickServer(button.dataset.progId || '', button.dataset.host || 'localhost');
     });
     el('tagTree').addEventListener('click', event => {
-        const button = event.target.closest('button[data-action]');
-        if (!button) return;
-        if (button.dataset.action === 'open-branch') {
-            browseTags(button.dataset.path || '').catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`);
+        const actionEl = event.target.closest('[data-action]');
+        if (!actionEl) return;
+        if (actionEl.dataset.action === 'open-branch') {
+            browseTags(actionEl.dataset.path || '').catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`);
             return;
         }
-        if (button.dataset.action === 'add-tag') {
-            addTag(button.dataset.sourceId || '', button.dataset.itemId || '', button.dataset.name || '').catch(e => alert('Add failed: ' + e.message));
+        if (actionEl.tagName === 'BUTTON' && actionEl.dataset.action === 'add-tag') {
+            addTag(actionEl.dataset.sourceId || '', actionEl.dataset.itemId || '', actionEl.dataset.name || '').catch(e => alert('Add failed: ' + e.message));
         }
     });
+    el('tagBreadcrumb').addEventListener('click', event => {
+        const link = event.target.closest('a[data-crumb]');
+        if (!link) return;
+        browseTags(link.dataset.crumb || '').catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`);
+    });
     el('mappedList').addEventListener('click', event => {
-        const button = event.target.closest('button[data-action="remove-mapping"]');
+        const row = event.target.closest('[data-action="open-faceplate"]');
+        if (!row) return;
+        openFaceplate(row.dataset.sourceId || '', row.dataset.itemId || '');
+    });
+    el('faceplateOverlay').addEventListener('click', event => {
+        const button = event.target.closest('button[data-action]');
         if (!button) return;
-        removeMapping(button.dataset.sourceId || '', button.dataset.itemId || '').catch(e => alert('Remove failed: ' + e.message));
+        const sourceId = button.dataset.sourceId || '';
+        const itemId = button.dataset.itemId || '';
+        if (button.dataset.action === 'remove-mapping') {
+            removeMapping(sourceId, itemId).then(() => closeFaceplate()).catch(e => alert('Remove failed: ' + e.message));
+            return;
+        }
+        if (button.dataset.action === 'save-tag') {
+            updateMapping(sourceId, itemId, payload => {
+                payload.mode = el('fpMode').value || 'Source';
+                if (payload.mode === 'Manual') {
+                    const manualField = el('fpManualInput');
+                    if (!manualField.value.trim()) {
+                        const liveText = el('fpLivePanel')?.querySelector('.fp-v')?.textContent || '';
+                        manualField.value = liveText;
+                    }
+                    payload.manualValue = manualField.value.trim() || '';
+                    payload.enabled = true;
+                } else {
+                    payload.manualValue = null;
+                }
+            }).then(() => {
+                el('mappingMessage').textContent = 'Mapping updated.';
+                openFaceplate(sourceId, itemId);
+            }).catch(e => alert('Update failed: ' + e.message));
+        }
+    });
+    el('faceplateOverlay').addEventListener('change', event => {
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return;
+        if (target.id === 'fpEnabled') {
+            updateMapping(target.dataset.sourceId || '', target.dataset.itemId || '', payload => {
+                payload.enabled = target.checked;
+                if (!target.checked) { payload.mode = 'Source'; payload.manualValue = null; }
+            }).then(() => openFaceplate(target.dataset.sourceId || '', target.dataset.itemId || '')).catch(e => alert('Update failed: ' + e.message));
+            return;
+        }
+        if (target.id === 'fpMode') {
+            updateManualInputState();
+        }
     });
 }
 
