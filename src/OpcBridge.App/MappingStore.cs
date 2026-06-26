@@ -177,7 +177,8 @@ public sealed class MappingStore
             DataType = string.IsNullOrWhiteSpace(tag.DataType) ? "Auto" : tag.DataType.Trim(),
             Enabled = tag.Enabled,
             Mode = NormalizeMode(tag.Mode),
-            ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue.Trim()
+            ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue.Trim(),
+            PollRateMs = Math.Max(0, tag.PollRateMs)
         };
     }
 

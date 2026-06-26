@@ -86,6 +86,7 @@ public sealed class BridgeWorker : BackgroundService
                             ua_server_.SyncMappings(activeMappings);
                             bridge_state_.RetainMappedValues(activeMappings);
                             uaMappingVersion = mappingVersion;
+                            connectedVersion = -1;
                             bridge_state_.UpdateSources(settings.UpdateRateMs, activeMappings.Count, settings.Sources);
                             logger_.LogInformation("Applied tag mapping change: {Count} mappings", activeMappings.Count);
                         }
@@ -152,6 +153,8 @@ public sealed class BridgeWorker : BackgroundService
         Dictionary<string, Task> pollers,
         CancellationToken pollerToken)
     {
+        SourceMappingCache cache = cacheHolder.Cache;
+
         for (int i = 0; i < settings.Sources.Count; i++)
         {
             DaSourceRuntimeSettings source = settings.Sources[i];
@@ -160,19 +163,26 @@ public sealed class BridgeWorker : BackgroundService
                 continue;
             }
 
-            pollers[source.SourceId] = Task.Run(() => RunSourcePollerAsync(
-                source,
-                session,
-                cacheHolder,
-                concurrencyGate,
-                failedSourceQueue,
-                pollerToken));
+            IReadOnlyList<int> rates = cache.GetDistinctRates(source.SourceId, source.UpdateRateMs);
+            foreach (int rate in rates)
+            {
+                string pollerKey = $"{source.SourceId}:{rate}";
+                pollers[pollerKey] = Task.Run(() => RunSourcePollerAsync(
+                    source,
+                    session,
+                    rate,
+                    cacheHolder,
+                    concurrencyGate,
+                    failedSourceQueue,
+                    pollerToken));
+            }
         }
     }
 
     private async Task RunSourcePollerAsync(
         DaSourceRuntimeSettings source,
         SourceSession session,
+        int rate,
         SharedCacheHolder cacheHolder,
         SemaphoreSlim concurrencyGate,
         ConcurrentQueue<string> failedSourceQueue,
@@ -180,19 +190,16 @@ public sealed class BridgeWorker : BackgroundService
     {
         while (!pollerToken.IsCancellationRequested)
         {
-            int rate = source.UpdateRateMs;
+            int delayRate = rate;
 
             try
             {
                 DaRuntimeSettingsSnapshot currentSettings = da_settings_.GetSnapshot();
                 DaSourceRuntimeSettings? currentSource = currentSettings.GetSource(source.SourceId);
-                if (currentSource is not null)
-                {
-                    rate = currentSource.UpdateRateMs;
-                }
+                int defaultRate = currentSource is not null ? currentSource.UpdateRateMs : source.UpdateRateMs;
 
                 SourceMappingCache cache = cacheHolder.Cache;
-                IReadOnlyList<TagMapping> sourceReadMappings = cache.GetSourceReadMappings(source.SourceId);
+                IReadOnlyList<TagMapping> sourceReadMappings = cache.GetSourceReadMappingsByRate(source.SourceId, rate, defaultRate);
                 IReadOnlyList<TagMapping> manualMappings = cache.GetManualMappings(source.SourceId);
 
                 Stopwatch cycleTimer = Stopwatch.StartNew();
@@ -218,13 +225,13 @@ public sealed class BridgeWorker : BackgroundService
             }
             catch (Exception exception)
             {
-                logger_.LogError(exception, "Source {SourceId} poller failed", source.SourceId);
+                logger_.LogError(exception, "Source {SourceId} rate {Rate}ms poller failed", source.SourceId, rate);
                 failedSourceQueue.Enqueue(source.SourceId);
             }
 
             try
             {
-                await Task.Delay(rate, pollerToken).ConfigureAwait(false);
+                await Task.Delay(delayRate, pollerToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (pollerToken.IsCancellationRequested)
             {
@@ -621,6 +628,34 @@ public sealed class BridgeWorker : BackgroundService
             return mappings_by_source_.TryGetValue(sourceId, out SourceMappingSet? mappings)
                 ? mappings.Manual
                 : EmptyMappings;
+        }
+
+        public IReadOnlyList<int> GetDistinctRates(string sourceId, int defaultRate)
+        {
+            if (!mappings_by_source_.TryGetValue(sourceId, out SourceMappingSet? mappings))
+            {
+                return [defaultRate];
+            }
+
+            HashSet<int> rates = new();
+            for (int i = 0; i < mappings.SourceRead.Count; i++)
+            {
+                rates.Add(mappings.SourceRead[i].PollRateMs > 0 ? mappings.SourceRead[i].PollRateMs : defaultRate);
+            }
+
+            return rates.Count > 0 ? rates.ToArray() : new[] { defaultRate };
+        }
+
+        public IReadOnlyList<TagMapping> GetSourceReadMappingsByRate(string sourceId, int rate, int defaultRate)
+        {
+            if (!mappings_by_source_.TryGetValue(sourceId, out SourceMappingSet? mappings))
+            {
+                return EmptyMappings;
+            }
+
+            return mappings.SourceRead
+                .Where(m => (m.PollRateMs > 0 ? m.PollRateMs : defaultRate) == rate)
+                .ToArray();
         }
     }
 

@@ -249,7 +249,8 @@ app.MapPost("/api/mappings/add", (MappingAddRequest request, MappingStore store)
             UaNodeId = tag.UaNodeId ?? string.Empty,
             Enabled = tag.Enabled ?? true,
             Mode = string.IsNullOrWhiteSpace(tag.Mode) ? TagMode.Source : tag.Mode,
-            ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue
+            ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue,
+            PollRateMs = tag.PollRateMs ?? 0
         });
 
     long version = store.Add(tags);
@@ -271,7 +272,8 @@ app.MapPost("/api/mappings/update", (MappingUpdateRequest request, MappingStore 
         UaNodeId = request.Tag.UaNodeId ?? string.Empty,
         Enabled = request.Tag.Enabled ?? true,
         Mode = string.IsNullOrWhiteSpace(request.Tag.Mode) ? TagMode.Source : request.Tag.Mode,
-        ManualValue = string.IsNullOrWhiteSpace(request.Tag.ManualValue) ? null : request.Tag.ManualValue
+        ManualValue = string.IsNullOrWhiteSpace(request.Tag.ManualValue) ? null : request.Tag.ManualValue,
+        PollRateMs = request.Tag.PollRateMs ?? 0
     };
 
     if (!store.TryUpdate(tag, out long version))

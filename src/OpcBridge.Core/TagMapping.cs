@@ -10,6 +10,7 @@ public sealed class TagMapping
     public bool Enabled { get; set; } = true;
     public string Mode { get; set; } = TagMode.Source;
     public string? ManualValue { get; set; }
+    public int PollRateMs { get; set; }
 }
 
 public static class TagMode

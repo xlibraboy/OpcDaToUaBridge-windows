@@ -13,13 +13,10 @@ public sealed class OpcDaClient : IDaClient
     private static readonly int ItemValueOffset = (int)Marshal.OffsetOf<OpcItemState>(nameof(OpcItemState.Value));
 
     private readonly DaClientOptions options_;
+    private readonly object com_lock_ = new();
     private object? server_com_object_;
-    private object? group_com_object_;
     private IOPCServer? server_;
-    private IOPCItemMgt? item_management_;
-    private IOPCSyncIO? sync_io_;
-    private ItemBinding[] item_bindings_ = [];
-    private int server_group_handle_;
+    private readonly Dictionary<int, RateGroup> rate_groups_ = new();
 
     public OpcDaClient(DaClientOptions options)
     {
@@ -113,33 +110,8 @@ public sealed class OpcDaClient : IDaClient
         IOPCServer server = serverObject as IOPCServer
             ?? throw new InvalidOperationException($"COM server '{progId}' does not expose IOPCServer.");
 
-        Guid itemManagementGuid = typeof(IOPCItemMgt).GUID;
-        int addGroupHresult = server.AddGroup(
-            "OpcBridge",
-            1,
-            Math.Max(100, options_.UpdateRateMs),
-            1,
-            IntPtr.Zero,
-            IntPtr.Zero,
-            0,
-            out int serverGroupHandle,
-            out _,
-            ref itemManagementGuid,
-            out object groupObject);
-        ThrowOnFailed(addGroupHresult, "Failed to create OPC DA group.");
-
-        IOPCItemMgt itemManagement = groupObject as IOPCItemMgt
-            ?? throw new InvalidOperationException("OPC DA group does not expose IOPCItemMgt.");
-        IOPCSyncIO syncIo = groupObject as IOPCSyncIO
-            ?? throw new InvalidOperationException("OPC DA group does not expose IOPCSyncIO.");
-
         server_com_object_ = serverObject;
-        group_com_object_ = groupObject;
         server_ = server;
-        item_management_ = itemManagement;
-        sync_io_ = syncIo;
-        server_group_handle_ = serverGroupHandle;
-        item_bindings_ = [];
     }
 
     public Task<IReadOnlyList<BridgeValue>> ReadAsync(
@@ -154,126 +126,97 @@ public sealed class OpcDaClient : IDaClient
         }
 
         EnsureConnected();
-        EnsureItemsConfigured(mappings);
 
-        IOPCSyncIO syncIo = sync_io_!;
-        int[] serverHandles = new int[item_bindings_.Length];
-        for (int i = 0; i < item_bindings_.Length; i++)
+        int defaultRate = Math.Max(100, options_.UpdateRateMs);
+
+        Dictionary<int, List<TagMapping>> byRate = new();
+        for (int i = 0; i < mappings.Count; i++)
         {
-            serverHandles[i] = item_bindings_[i].ServerHandle;
+            TagMapping mapping = mappings[i];
+            int rate = mapping.PollRateMs > 0 ? mapping.PollRateMs : defaultRate;
+            if (!byRate.TryGetValue(rate, out List<TagMapping>? list))
+            {
+                list = new();
+                byRate[rate] = list;
+            }
+            list.Add(mapping);
         }
 
-        IntPtr itemStatesPointer = IntPtr.Zero;
-        IntPtr errorsPointer = IntPtr.Zero;
-
-        try
+        List<BridgeValue> allValues = new(mappings.Count);
+        lock (com_lock_)
         {
-            int readHresult = syncIo.Read(
-                OpcDataSourceDevice,
-                serverHandles.Length,
-                serverHandles,
-                out itemStatesPointer,
-                out errorsPointer);
-            ThrowOnFailed(readHresult, "OPC DA read failed.");
-
-            int[] itemErrors = new int[item_bindings_.Length];
-            Marshal.Copy(errorsPointer, itemErrors, 0, itemErrors.Length);
-
-            BridgeValue[] values = new BridgeValue[item_bindings_.Length];
-            for (int i = 0; i < item_bindings_.Length; i++)
+            foreach ((int rate, List<TagMapping> rateMappings) in byRate)
             {
-                IntPtr itemStatePointer = IntPtr.Add(itemStatesPointer, i * ItemStateSize);
-                OpcItemState itemState = Marshal.PtrToStructure<OpcItemState>(itemStatePointer);
-
-                try
+                if (!rate_groups_.TryGetValue(rate, out RateGroup? group))
                 {
-                    ThrowOnFailed(itemErrors[i], $"OPC DA item read failed for '{item_bindings_[i].DaItemId}'.");
-
-                    int quality = (ushort)itemState.Quality;
-                    values[i] = new BridgeValue(
-                        options_.SourceId,
-                        item_bindings_[i].DaItemId,
-                        itemState.Value,
-                        FileTimeToUtc(itemState.Timestamp),
-                        quality,
-                        QualityMapper.IsGoodDaQuality(quality));
+                    if (OperatingSystem.IsWindows())
+                    {
+                        group = CreateRateGroup(rate);
+                    }
+                    else
+                    {
+                        throw new PlatformNotSupportedException("OPC DA requires Windows.");
+                    }
+                    rate_groups_[rate] = group;
                 }
-                finally
-                {
-                    VariantClear(IntPtr.Add(itemStatePointer, ItemValueOffset));
-                }
-            }
 
-            return Task.FromResult<IReadOnlyList<BridgeValue>>(values);
-        }
-        finally
-        {
-            if (errorsPointer != IntPtr.Zero)
-            {
-                Marshal.FreeCoTaskMem(errorsPointer);
-            }
-
-            if (itemStatesPointer != IntPtr.Zero)
-            {
-                Marshal.FreeCoTaskMem(itemStatesPointer);
+                EnsureGroupItemsConfigured(group, rateMappings);
+                IReadOnlyList<BridgeValue> groupValues = ReadGroup(group);
+                allValues.AddRange(groupValues);
             }
         }
+
+        return Task.FromResult<IReadOnlyList<BridgeValue>>(allValues);
     }
 
-    public ValueTask DisposeAsync()
+    [SupportedOSPlatform("windows")]
+    private RateGroup CreateRateGroup(int rate)
     {
-        try
+        IOPCServer server = server_!;
+        Guid itemManagementGuid = typeof(IOPCItemMgt).GUID;
+
+        int addGroupHresult = server.AddGroup(
+            $"OpcBridge_{rate}",
+            1,
+            Math.Max(100, rate),
+            rate,
+            IntPtr.Zero,
+            IntPtr.Zero,
+            0,
+            out int serverGroupHandle,
+            out _,
+            ref itemManagementGuid,
+            out object groupObject);
+        ThrowOnFailed(addGroupHresult, $"Failed to create OPC DA group for rate {rate}ms.");
+
+        IOPCItemMgt itemManagement = groupObject as IOPCItemMgt
+            ?? throw new InvalidOperationException("OPC DA group does not expose IOPCItemMgt.");
+        IOPCSyncIO syncIo = groupObject as IOPCSyncIO
+            ?? throw new InvalidOperationException("OPC DA group does not expose IOPCSyncIO.");
+
+        return new RateGroup
         {
-            RemoveConfiguredItems();
-
-            if (server_ is not null && server_group_handle_ != 0)
-            {
-                server_.RemoveGroup(server_group_handle_, 0);
-            }
-        }
-        finally
-        {
-            item_bindings_ = [];
-            server_group_handle_ = 0;
-            sync_io_ = null;
-            item_management_ = null;
-            server_ = null;
-
-            if (OperatingSystem.IsWindows())
-            {
-                ReleaseComObject(ref group_com_object_);
-                ReleaseComObject(ref server_com_object_);
-            }
-            else
-            {
-                group_com_object_ = null;
-                server_com_object_ = null;
-            }
-        }
-
-        return ValueTask.CompletedTask;
+            Rate = rate,
+            ComObject = groupObject,
+            ItemManagement = itemManagement,
+            SyncIo = syncIo,
+            ServerGroupHandle = serverGroupHandle,
+            Bindings = []
+        };
     }
 
-    private void EnsureConnected()
+    private static void EnsureGroupItemsConfigured(RateGroup group, IReadOnlyList<TagMapping> mappings)
     {
-        if (server_ is null || item_management_ is null || sync_io_ is null)
+        if (group.Bindings.Length != 0)
         {
-            throw new InvalidOperationException("OPC DA client is not connected.");
-        }
-    }
-
-    private void EnsureItemsConfigured(IReadOnlyList<TagMapping> mappings)
-    {
-        if (item_bindings_.Length != 0)
-        {
-            if (item_bindings_.Length != mappings.Count)
+            if (group.Bindings.Length != mappings.Count)
             {
                 throw new InvalidOperationException("OPC DA mappings changed after the client was connected.");
             }
 
-            for (int i = 0; i < item_bindings_.Length; i++)
+            for (int i = 0; i < group.Bindings.Length; i++)
             {
-                if (!string.Equals(item_bindings_[i].DaItemId, mappings[i].DaItemId, StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(group.Bindings[i].DaItemId, mappings[i].DaItemId, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException("OPC DA mappings changed after the client was connected.");
                 }
@@ -282,7 +225,7 @@ public sealed class OpcDaClient : IDaClient
             return;
         }
 
-        IOPCItemMgt itemManagement = item_management_!;
+        IOPCItemMgt itemManagement = group.ItemManagement!;
         OpcItemDefinition[] definitions = new OpcItemDefinition[mappings.Count];
         for (int i = 0; i < mappings.Count; i++)
         {
@@ -310,7 +253,7 @@ public sealed class OpcDaClient : IDaClient
             ThrowOnFailed(addItemsHresult, "Failed to add OPC DA items.");
 
             int[] itemErrors = new int[definitions.Length];
-            Marshal.Copy(errorsPointer, itemErrors, 0, itemErrors.Length);
+            Marshal.Copy(errorsPointer, itemErrors, 0, definitions.Length);
 
             ItemBinding[] bindings = new ItemBinding[definitions.Length];
             cleanupHandles = new List<int>(definitions.Length);
@@ -332,13 +275,13 @@ public sealed class OpcDaClient : IDaClient
                 cleanupHandles.Add(result.ServerHandle);
             }
 
-            item_bindings_ = bindings;
+            group.Bindings = bindings;
         }
         catch
         {
             if (cleanupHandles is { Count: > 0 })
             {
-                RemoveItems(cleanupHandles.ToArray());
+                RemoveItems(group.ItemManagement, cleanupHandles.ToArray());
             }
 
             throw;
@@ -357,26 +300,148 @@ public sealed class OpcDaClient : IDaClient
         }
     }
 
-    private void RemoveConfiguredItems()
+    private IReadOnlyList<BridgeValue> ReadGroup(RateGroup group)
     {
-        if (item_bindings_.Length == 0)
+        IOPCSyncIO syncIo = group.SyncIo!;
+        ItemBinding[] bindings = group.Bindings;
+
+        if (bindings.Length == 0)
+        {
+            return Array.Empty<BridgeValue>();
+        }
+
+        int[] serverHandles = new int[bindings.Length];
+        for (int i = 0; i < bindings.Length; i++)
+        {
+            serverHandles[i] = bindings[i].ServerHandle;
+        }
+
+        IntPtr itemStatesPointer = IntPtr.Zero;
+        IntPtr errorsPointer = IntPtr.Zero;
+
+        try
+        {
+            int readHresult = syncIo.Read(
+                OpcDataSourceDevice,
+                serverHandles.Length,
+                serverHandles,
+                out itemStatesPointer,
+                out errorsPointer);
+            ThrowOnFailed(readHresult, "OPC DA read failed.");
+
+            int[] itemErrors = new int[bindings.Length];
+            Marshal.Copy(errorsPointer, itemErrors, 0, bindings.Length);
+
+            BridgeValue[] values = new BridgeValue[bindings.Length];
+            for (int i = 0; i < bindings.Length; i++)
+            {
+                IntPtr itemStatePointer = IntPtr.Add(itemStatesPointer, i * ItemStateSize);
+                OpcItemState itemState = Marshal.PtrToStructure<OpcItemState>(itemStatePointer);
+
+                try
+                {
+                    ThrowOnFailed(itemErrors[i], $"OPC DA item read failed for '{bindings[i].DaItemId}'.");
+
+                    int quality = (ushort)itemState.Quality;
+                    values[i] = new BridgeValue(
+                        options_.SourceId,
+                        bindings[i].DaItemId,
+                        itemState.Value,
+                        FileTimeToUtc(itemState.Timestamp),
+                        quality,
+                        QualityMapper.IsGoodDaQuality(quality));
+                }
+                finally
+                {
+                    VariantClear(IntPtr.Add(itemStatePointer, ItemValueOffset));
+                }
+            }
+
+            return values;
+        }
+        finally
+        {
+            if (errorsPointer != IntPtr.Zero)
+            {
+                Marshal.FreeCoTaskMem(errorsPointer);
+            }
+
+            if (itemStatesPointer != IntPtr.Zero)
+            {
+                Marshal.FreeCoTaskMem(itemStatesPointer);
+            }
+        }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        try
+        {
+            lock (com_lock_)
+            {
+                foreach (RateGroup group in rate_groups_.Values)
+                {
+                    RemoveGroupItems(group);
+
+                    if (server_ is not null && group.ServerGroupHandle != 0)
+                    {
+                        server_.RemoveGroup(group.ServerGroupHandle, 0);
+                    }
+                }
+
+                rate_groups_.Clear();
+            }
+        }
+        finally
+        {
+            server_ = null;
+
+            if (OperatingSystem.IsWindows())
+            {
+                foreach (RateGroup group in rate_groups_.Values)
+                {
+                    ReleaseComObject(ref group.ComObject);
+                }
+
+                ReleaseComObject(ref server_com_object_);
+            }
+            else
+            {
+                server_com_object_ = null;
+            }
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
+    private void EnsureConnected()
+    {
+        if (server_ is null)
+        {
+            throw new InvalidOperationException("OPC DA client is not connected.");
+        }
+    }
+
+    private static void RemoveGroupItems(RateGroup group)
+    {
+        if (group.Bindings.Length == 0)
         {
             return;
         }
 
-        int[] serverHandles = new int[item_bindings_.Length];
-        for (int i = 0; i < item_bindings_.Length; i++)
+        int[] serverHandles = new int[group.Bindings.Length];
+        for (int i = 0; i < group.Bindings.Length; i++)
         {
-            serverHandles[i] = item_bindings_[i].ServerHandle;
+            serverHandles[i] = group.Bindings[i].ServerHandle;
         }
 
-        RemoveItems(serverHandles);
-        item_bindings_ = [];
+        RemoveItems(group.ItemManagement, serverHandles);
+        group.Bindings = [];
     }
 
-    private void RemoveItems(int[] serverHandles)
+    private static void RemoveItems(IOPCItemMgt? itemManagement, int[] serverHandles)
     {
-        if (item_management_ is null || serverHandles.Length == 0)
+        if (itemManagement is null || serverHandles.Length == 0)
         {
             return;
         }
@@ -384,7 +449,7 @@ public sealed class OpcDaClient : IDaClient
         IntPtr errorsPointer = IntPtr.Zero;
         try
         {
-            item_management_.RemoveItems(serverHandles.Length, serverHandles, out errorsPointer);
+            itemManagement.RemoveItems(serverHandles.Length, serverHandles, out errorsPointer);
         }
         finally
         {
@@ -466,6 +531,16 @@ public sealed class OpcDaClient : IDaClient
     private static extern bool CloseHandle(nint handle);
 
     private sealed record ItemBinding(string DaItemId, int ServerHandle);
+
+    private sealed class RateGroup
+    {
+        public int Rate;
+        public object? ComObject;
+        public IOPCItemMgt? ItemManagement;
+        public IOPCSyncIO? SyncIo;
+        public int ServerGroupHandle;
+        public ItemBinding[] Bindings = [];
+    }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct OpcItemDefinition

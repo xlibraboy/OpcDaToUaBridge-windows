@@ -299,6 +299,7 @@ internal static class DashboardPage
         <div class="modal-f">
             <div class="field"><label class="fl" style="width:auto">Enabled</label><input type="checkbox" id="fpEnabled" data-action="toggle-tag-enabled"></div>
             <div class="field"><label class="fl" style="width:auto">Mode</label><select id="fpMode" data-action="tag-mode"><option value="Source">Source</option><option value="Manual">Manual</option></select></div>
+            <div class="field"><label class="fl" style="width:auto">Poll Rate</label><input id="fpPollRate" type="text" inputmode="numeric" placeholder="0" style="width:80px"><span class="msg">ms · 0 = source default</span></div>
             <button class="btn ghost" type="button" id="fpApply" data-action="save-tag">Apply</button>
             <button class="btn ghost" type="button" id="fpRemove" data-action="remove-mapping">Remove</button>
         </div>
@@ -422,7 +423,9 @@ function renderMappingRow(mapping) {
     const mode = mapping.mode || mapping.Mode || 'Source';
     const enabled = (mapping.enabled ?? mapping.Enabled) !== false;
     const modeBadge = mode === 'Manual' ? badge('Manual', 'warn') : (enabled ? badge('Source', 'good') : badge('Disabled', 'bad'));
-    return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}"><div style="flex:1"><div class="n">${esc(name)}</div><div class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</div></div><div class="li-badge">${modeBadge}</div></div>`;
+    const pollRate = mapping.pollRateMs ?? mapping.PollRateMs ?? 0;
+    const rateBadge = pollRate > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">${pollRate}ms</span>` : '';
+    return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}"><div style="flex:1"><div class="n">${esc(name)}</div><div class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</div></div><div class="li-badge">${rateBadge}${modeBadge}</div></div>`;
 }
 
 function renderMappingRows(mappings) {
@@ -448,6 +451,8 @@ function openFaceplate(sourceId, itemId) {
     el('fpMode').value = mode;
     el('fpManualInput').value = String(manualValue ?? '');
     el('fpManualInput').disabled = mode !== 'Manual';
+    const pollRate = mapping.pollRateMs ?? mapping.PollRateMs ?? 0;
+    el('fpPollRate').value = pollRate || '';
     el('fpModeHint').textContent = 'Mode ' + mode;
     el('fpApply').dataset.sourceId = sourceId;
     el('fpApply').dataset.itemId = itemId;
@@ -728,7 +733,8 @@ async function updateMapping(sourceId, itemId, mutate) {
         uaNodeId: mapping.uaNodeId || mapping.UaNodeId || defaultUaNodeId(sourceId, itemId),
         enabled: (mapping.enabled ?? mapping.Enabled) !== false,
         mode: mapping.mode || mapping.Mode || 'Source',
-        manualValue: mapping.manualValue ?? mapping.ManualValue ?? null
+        manualValue: mapping.manualValue ?? mapping.ManualValue ?? null,
+        pollRateMs: mapping.pollRateMs ?? mapping.PollRateMs ?? 0
     };
     mutate(payload);
     const r = await fetch('/api/mappings/update', {
@@ -1022,6 +1028,7 @@ function bindDynamicButtons() {
         if (button.dataset.action === 'save-tag') {
             updateMapping(sourceId, itemId, payload => {
                 payload.mode = el('fpMode').value || 'Source';
+                payload.pollRateMs = Number.parseInt(el('fpPollRate').value.trim(), 10) || 0;
                 if (payload.mode === 'Manual') {
                     const manualField = el('fpManualInput');
                     if (!manualField.value.trim()) {

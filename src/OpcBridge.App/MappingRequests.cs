@@ -8,7 +8,8 @@ public sealed record MappingTagDto(
     string? UaNodeId = null,
     bool? Enabled = null,
     string? Mode = null,
-    string? ManualValue = null);
+    string? ManualValue = null,
+    int? PollRateMs = null);
 
 public sealed record MappingAddRequest(List<MappingTagDto>? Tags);
 
