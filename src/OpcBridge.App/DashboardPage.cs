@@ -37,11 +37,15 @@ internal static class DashboardPage
         .pill b { font-weight: 600; }
         .pill .k { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: .05em; }
         .topbar .clock { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
-        .tabbar { display: flex; background: var(--panel); border-bottom: 1px solid var(--border2); padding: 0 12px; }
-        .tabbtn { background: none; border: none; color: var(--muted); padding: 11px 18px; font-size: 13px; font-weight: 500; cursor: pointer; border-bottom: 2px solid transparent; display: flex; align-items: center; gap: 7px; }
-        .tabbtn.active { color: var(--accent); border-bottom-color: var(--accent); }
-        .view { display: none; padding: 16px 18px; }
-        .view.active { display: block; }
+.app-shell { display: flex; min-height: calc(100vh - 46px); }
+.tabbar { display: flex; flex-direction: column; background: var(--panel); border-right: 1px solid var(--border2); padding: 8px 0; width: 152px; flex-shrink: 0; }
+.tabbtn { background: none; border: none; color: var(--muted); padding: 11px 16px; font-size: 13px; font-weight: 500; cursor: pointer; border-left: 3px solid transparent; display: flex; align-items: center; gap: 8px; text-align: left; }
+.tabbtn:hover { color: var(--text); background: var(--panel2); }
+.tabbtn.active { color: var(--accent); border-left-color: var(--accent); background: var(--panel2); }
+.content { flex: 1; min-width: 0; overflow-x: auto; }
+.view { display: none; padding: 16px 18px; }
+.view.active { display: block; }
+@media (max-width: 600px) { .app-shell { flex-direction: column; } .tabbar { flex-direction: row; width: 100%; border-right: none; border-bottom: 1px solid var(--border2); padding: 0 8px; overflow-x: auto; } .tabbtn { border-left: none; border-bottom: 3px solid transparent; padding: 10px 14px; } .tabbtn.active { border-left: none; border-bottom-color: var(--accent); } }
         .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
         @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
         .box { background: var(--panel); border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
@@ -161,6 +165,7 @@ internal static class DashboardPage
     </div>
     <div class="clock" id="clock">&#8212;</div>
 </div>
+<div class="app-shell">
 <div class="tabbar">
     <button class="tabbtn active" data-tab="monitor" onclick="showTab('monitor')">Monitor</button>
     <button class="tabbtn" data-tab="connection" onclick="showTab('connection')">Connection</button>
@@ -169,6 +174,7 @@ internal static class DashboardPage
     <button class="tabbtn" data-tab="help" onclick="showTab('help')">Help</button>
     <button class="tabbtn" data-tab="about" onclick="showTab('about')">About</button>
 </div>
+<div class="content">
 <div class="view active" id="view-monitor">
     <div class="stats">
         <div class="stat"><div class="k">Bridge runtime</div><div class="v" id="bridgeState">&#8212;</div><div class="s" id="lastError">No errors</div></div>
@@ -364,6 +370,8 @@ internal static class DashboardPage
             </div>
         </div>
     </div>
+</div>
+</div>
 </div>
 """;
 
