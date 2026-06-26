@@ -172,6 +172,16 @@ internal static class DashboardPage
         .help-body h4 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 12px 0 6px; }
         .help-body h4:first-child { margin-top: 0; }
         .help-body code { background: var(--bg); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+        .help-body h1 { display: none; }
+        .help-body h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 14px 0 6px; }
+        .help-body h3 { font-size: 13px; margin: 14px 0 6px; }
+        .help-body p { color: var(--muted); margin: 6px 0; }
+        .help-body em { color: var(--muted); font-size: 11px; }
+        .help-body table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 12px; }
+        .help-body th { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border2); color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+        .help-body td { padding: 5px 8px; border-bottom: 1px solid var(--border); }
+        .help-body td:first-child { font-weight: 600; white-space: nowrap; }
+        .help-body td:nth-child(2) { text-align: center; white-space: nowrap; }
         .kv { display: grid; grid-template-columns: 140px 1fr; gap: 8px 12px; align-items: start; }
         .kv .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
         .kv .v { word-break: break-word; }
@@ -384,100 +394,7 @@ internal static class DashboardPage
     </div>
 </div>
 <div class="view" id="view-help">
-    <div class="help-accordion">
-        <details class="help-section" open>
-            <summary>Basic Workflow</summary>
-            <div class="help-body">
-                <ul>
-                    <li>Use <b>Connection</b> to configure the OPC DA source, host, credentials, and polling rates.</li>
-                    <li>Use <b>Tags</b> to browse DA items, create DA → OPC UA mappings, and set per-tag poll rates.</li>
-                    <li>Use <b>Monitor</b> to confirm source reads, live values, rate-group alarms, and OPC UA writes.</li>
-                    <li>Use <b>Logs</b> to review warnings and errors from the bridge and UA server.</li>
-                </ul>
-            </div>
-        </details>
-        <details class="help-section" open>
-            <summary>Poll Rate &amp; Tag Limits</summary>
-            <div class="help-body">
-                <ul>
-                    <li>Each tag can be assigned its own poll rate via the faceplate (Tags tab → click a tag). Tags with the same rate share one OPC DA group.</li>
-                    <li>The default rate (Connection tab → Polling section) applies only to new sources and tags set to "Source Default".</li>
-                    <li>Watch the alarm bar on the Monitor tab: <span class="good">green</span> = within limits, <span class="warn">yellow</span> = cycle budget warning, <span class="bad">red</span> = limit exceeded or saturated.</li>
-                </ul>
-                <h4>Default tag limits per rate <span class="msg">(appsettings.json → Bridge:RateLimits)</span></h4>
-                <div class="values-wrap">
-                    <table class="rate-limit-table">
-                        <thead><tr><th>Rate</th><th>Max Tags</th><th>Basis</th></tr></thead>
-                        <tbody>
-                            <tr><td>100 ms</td><td>200</td><td>COM device read ~0.4ms/item; 80ms budget at 80% cycle</td></tr>
-                            <tr><td>250 ms</td><td>500</td><td>Cached reads ~0.4ms; 200ms budget</td></tr>
-                            <tr><td>500 ms</td><td>1,000</td><td>Mixed cache/device ~0.4ms; 400ms budget</td></tr>
-                            <tr><td>1 s</td><td>5,000</td><td>Cached reads; 800ms budget; UA lock ~50ms</td></tr>
-                            <tr><td>2 s</td><td>10,000</td><td>~1.6s budget; UA updates ~10K/sec</td></tr>
-                            <tr><td>5 s</td><td>20,000</td><td>~4s budget; network ~2MB/s per UA client</td></tr>
-                            <tr><td>10 s</td><td>50,000</td><td>~8s budget; network ~5MB/s; lock contention monitor</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-                <h4>How limits are derived</h4>
-                <ul>
-                    <li><b>DA COM read time</b> — IOPCSyncIO.Read with N items takes ~0.4–1ms/item (cache) or 2–5ms/item (device). Limit = 80% of rate interval ÷ per-item read time.</li>
-                    <li><b>UA server lock</b> — each UpdateValue holds a lock for ~5–10μs. At 5000 tags × 500ms = 10K updates/sec, lock contention becomes measurable.</li>
-                    <li><b>Network bandwidth</b> — each UA client notification is ~50–100 bytes. At 5000 tags × 500ms ≈ 500KB/s per client; 50K tags × 100ms ≈ 5MB/s saturates 100Mbps LAN.</li>
-                    <li>Limits are <b>conservative estimates</b>, not hard ceilings. Adjust in appsettings.json for your hardware and network. The alarm bar warns before degradation.</li>
-                </ul>
-            </div>
-        </details>
-        <details class="help-section">
-            <summary>Manual Override &amp; Tag Modes</summary>
-            <div class="help-body">
-                <ul>
-                    <li><b>Source mode</b> — the tag publishes the live value read from the DA server (default).</li>
-                    <li><b>Manual mode</b> — the tag publishes a fixed value you set, overriding the DA read. Switching to Manual with an empty field auto-copies the current live value.</li>
-                    <li><b>Disabled</b> — the tag is not published to OPC UA and not read from DA.</li>
-                    <li>Open a tag's faceplate (Tags tab → click a tag) to change mode, set manual value, or adjust poll rate.</li>
-                </ul>
-            </div>
-        </details>
-        <details class="help-section">
-            <summary>OPC UA Server</summary>
-            <div class="help-body">
-                <ul>
-                    <li>The bridge runs a built-in OPC UA server. UA clients connect to the endpoint shown on the Monitor tab.</li>
-                    <li>Each DA tag mapping creates one UA variable node under the "OPC DA Tags" folder (namespace index 2).</li>
-                    <li>Node IDs follow the pattern <code>ns=2;s={sourceId}/{daItemId}</code> unless a custom UA Node ID is specified.</li>
-                    <li>The UA server supports read and subscription (monitored items). Writes from UA clients are not supported (read-only bridge).</li>
-                </ul>
-            </div>
-        </details>
-        <details class="help-section">
-            <summary>Troubleshooting</summary>
-            <div class="help-body">
-                <ul>
-                    <li><b>DA browse fails</b> — check ProgID, host reachability, DCOM permissions, and credentials (Connection tab → Credentials section).</li>
-                    <li><b>Values stop moving</b> — check Monitor → Source Status for connection state and last read timing. Check the alarm bar for rate-group saturation.</li>
-                    <li><b>Tags not appearing in UA</b> — verify the tag is Enabled and in Source mode (Tags tab → faceplate). Check Monitor → OPC UA Endpoint for node count.</li>
-                    <li><b>Rate group saturated</b> — the read time exceeds 80% of the poll rate. Increase the rate or reduce the number of tags in that rate group.</li>
-                    <li><b>Tag limit exceeded</b> — the number of tags in a rate group exceeds the configured limit. Move some tags to a slower rate or increase the limit in appsettings.json.</li>
-                </ul>
-            </div>
-        </details>
-        <details class="help-section">
-            <summary>Configuration Reference</summary>
-            <div class="help-body">
-                <h4>appsettings.json</h4>
-                <ul>
-                    <li><b>Da:ProgId</b> — OPC DA server ProgID (e.g. Matrikon.OPC.Simulation.1)</li>
-                    <li><b>Da:Host</b> — DA server host (localhost or remote IP)</li>
-                    <li><b>Da:UpdateRateMs</b> — default poll rate for new sources (min 100ms)</li>
-                    <li><b>Ua:EndpointUrl</b> — OPC UA server endpoint (default opc.tcp://0.0.0.0:4840/OpcDaToUaBridge)</li>
-                    <li><b>Ua:AutoAcceptUntrustedCertificates</b> — accept untrusted UA client certs (dev/test)</li>
-                    <li><b>Bridge:RateLimits</b> — max tags per rate group (rate ms → max tags)</li>
-                    <li><b>Bridge:Mappings</b> — initial tag mappings loaded at startup</li>
-                </ul>
-            </div>
-        </details>
-    </div>
+    <div class="help-accordion" id="helpContent"><span class="msg">Loading help…</span></div>
 </div>
 <div class="view" id="view-about">
     <div class="box">
@@ -612,6 +529,7 @@ function showTab(name) {
     if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
     if (name === 'logs') loadLogs().catch(e => el('logMessage').textContent = '✗ ' + e.message);
     if (name === 'about') loadAppInfo().catch(e => el('aboutName').textContent = '✗ ' + e.message);
+    if (name === 'help') loadHelp().catch(e => el('helpContent').innerHTML = '<span class="msg bad">✗ ' + esc(e.message) + '</span>');
 }
 function badge(t, c) { return `<span class="badge ${c}">${esc(t)}</span>`; }
 function stateClass(v) {
@@ -760,7 +678,21 @@ async function loadAppInfo(force = false) {
     state.appInfoLoaded = true;
 }
 
-
+let helpLoaded = false;
+async function loadHelp() {
+    if (helpLoaded) return;
+    const p = await (await fetch('/api/help', { cache: 'no-store' })).json();
+    const sections = (p.html || '').split(/<hr\s*\/?>/i).filter(s => s.trim());
+    const container = el('helpContent');
+    container.innerHTML = sections.map((section, i) => {
+        const titleMatch = section.match(/<h1[^>]*>(.*?)<\/h1>/i);
+        const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '') : 'Section';
+        const body = section.replace(/<h1[^>]*>.*?<\/h1>/i, '');
+        const openAttr = i < 2 ? ' open' : '';
+        return `<details class="help-section"${openAttr}><summary>${esc(title)}</summary><div class="help-body">${body}</div></details>`;
+    }).join('');
+    helpLoaded = true;
+}
 
 async function refresh() {
     try {
@@ -1235,6 +1167,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateLiveValuesUi();
     await refresh();
     if (initTab === 'logs') await loadLogs();
+    if (initTab === 'help') await loadHelp();
     if (initTab === 'about') await loadAppInfo();
     setInterval(refresh, 1000);
 });

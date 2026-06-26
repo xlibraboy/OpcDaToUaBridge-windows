@@ -1,4 +1,5 @@
 using System.Reflection;
+using Markdig;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
@@ -78,6 +79,7 @@ app.MapGet("/api/app-info", () =>
         creator = "xlibraboy"
     });
 });
+app.MapGet("/api/help", () => Results.Json(new { html = Markdig.Markdown.ToHtml(HelpContent.Markdown, new MarkdownPipelineBuilder().UseAdvancedExtensions().Build()) }));
 app.MapGet("/api/da/sources", (DaRuntimeSettings settings) =>
 {
     DaRuntimeSettingsSnapshot snapshot = settings.GetSnapshot();
