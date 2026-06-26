@@ -90,6 +90,7 @@ app.MapGet("/api/da/sources", (DaRuntimeSettings settings) =>
             displayName = source.DisplayName,
             progId = source.ProgId,
             host = source.Host,
+            updateRateMs = source.UpdateRateMs,
             remoteUsername = source.RemoteUsername,
             remoteDomain = source.RemoteDomain
         })
@@ -109,13 +110,38 @@ app.MapPost("/api/da/update-rate", (DaUpdateRateRequest request, DaRuntimeSettin
         updateRateMs = snapshot.UpdateRateMs
     });
 });
-app.MapPost("/api/da/sources", (DaServerConfigRequest request, DaRuntimeSettings settings) =>
+app.MapPost("/api/da/sources/update-rate", (DaSourceUpdateRateRequest request, DaRuntimeSettings settings) =>
 {
     if (string.IsNullOrWhiteSpace(request.SourceId))
     {
         return Results.BadRequest(new { error = "Source ID is required." });
     }
 
+    if (request.UpdateRateMs <= 0)
+    {
+        return Results.BadRequest(new { error = "Update rate must be greater than 0 ms." });
+    }
+
+    DaRuntimeSettingsSnapshot snapshot = settings.SetSourceUpdateRate(request.SourceId, request.UpdateRateMs);
+    DaSourceRuntimeSettings? source = snapshot.GetSource(request.SourceId);
+    if (source is null)
+    {
+        return Results.BadRequest(new { error = "Source not found." });
+    }
+
+    return Results.Json(new
+    {
+        version = snapshot.Version,
+        sourceId = source.SourceId,
+        updateRateMs = source.UpdateRateMs
+    });
+});
+app.MapPost("/api/da/sources", (DaServerConfigRequest request, DaRuntimeSettings settings) =>
+{
+    if (string.IsNullOrWhiteSpace(request.SourceId))
+    {
+        return Results.BadRequest(new { error = "Source ID is required." });
+    }
     DaRuntimeSettingsSnapshot snapshot = settings.UpsertSource(new DaSourceRuntimeSettings(
         request.SourceId,
         request.DisplayName ?? string.Empty,
@@ -123,7 +149,8 @@ app.MapPost("/api/da/sources", (DaServerConfigRequest request, DaRuntimeSettings
         request.Host,
         request.RemoteUsername,
         request.RemotePassword,
-        request.RemoteDomain));
+        request.RemoteDomain,
+        request.UpdateRateMs));
 
     DaSourceRuntimeSettings source = snapshot.GetSource(request.SourceId)!;
     return Results.Json(new
@@ -135,6 +162,7 @@ app.MapPost("/api/da/sources", (DaServerConfigRequest request, DaRuntimeSettings
             displayName = source.DisplayName,
             progId = source.ProgId,
             host = source.Host,
+            updateRateMs = source.UpdateRateMs,
             remoteUsername = source.RemoteUsername,
             remoteDomain = source.RemoteDomain
         }

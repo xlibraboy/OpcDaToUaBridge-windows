@@ -28,7 +28,7 @@ public sealed class DaRuntimeSettings
 
     public DaRuntimeSettingsSnapshot UpsertSource(DaSourceRuntimeSettings source)
     {
-        DaSourceRuntimeSettings normalized = NormalizeSource(source);
+        DaSourceRuntimeSettings normalized = NormalizeSource(source, snapshot_.UpdateRateMs);
 
         lock (sync_)
         {
@@ -103,6 +103,32 @@ public sealed class DaRuntimeSettings
         }
     }
 
+    public DaRuntimeSettingsSnapshot SetSourceUpdateRate(string sourceId, int updateRateMs)
+    {
+        int normalizedRate = NormalizeUpdateRate(updateRateMs);
+
+        lock (sync_)
+        {
+            List<DaSourceRuntimeSettings> sources = snapshot_.Sources.ToList();
+            int index = sources.FindIndex(source =>
+                string.Equals(source.SourceId, sourceId, StringComparison.OrdinalIgnoreCase));
+
+            if (index < 0)
+            {
+                return snapshot_;
+            }
+
+            sources[index] = sources[index] with { UpdateRateMs = normalizedRate };
+            snapshot_ = snapshot_ with
+            {
+                Sources = sources,
+                Version = snapshot_.Version + 1
+            };
+
+            return snapshot_;
+        }
+    }
+
 
     public DaRuntimeSettingsSnapshot SetServerConfig(
         string progId,
@@ -118,11 +144,13 @@ public sealed class DaRuntimeSettings
             host,
             username,
             password,
-            domain));
+            domain,
+            0));
     }
 
     private static IReadOnlyList<DaSourceRuntimeSettings> BuildInitialSources(DaClientOptions options)
     {
+        int defaultRate = NormalizeUpdateRate(options.UpdateRateMs);
         List<DaSourceRuntimeSettings> configuredSources = new();
 
         if (options.Sources is { Count: > 0 })
@@ -136,7 +164,8 @@ public sealed class DaRuntimeSettings
                     source.Host,
                     source.RemoteUsername,
                     source.RemotePassword,
-                    source.RemoteDomain)));
+                    source.RemoteDomain,
+                    source.UpdateRateMs), defaultRate));
             }
         }
         else
@@ -148,7 +177,8 @@ public sealed class DaRuntimeSettings
                 options.Host,
                 options.RemoteUsername,
                 options.RemotePassword,
-                options.RemoteDomain)));
+                options.RemoteDomain,
+                options.UpdateRateMs), defaultRate));
         }
 
         List<DaSourceRuntimeSettings> dedupedSources = new();
@@ -165,13 +195,13 @@ public sealed class DaRuntimeSettings
 
         if (dedupedSources.Count == 0)
         {
-            dedupedSources.Add(new DaSourceRuntimeSettings(DefaultSourceId, "Default Source", string.Empty, "localhost", null, null, null));
+            dedupedSources.Add(new DaSourceRuntimeSettings(DefaultSourceId, "Default Source", string.Empty, "localhost", null, null, null, NormalizeUpdateRate(0)));
         }
 
         return dedupedSources;
     }
 
-    private static DaSourceRuntimeSettings NormalizeSource(DaSourceRuntimeSettings source)
+    private static DaSourceRuntimeSettings NormalizeSource(DaSourceRuntimeSettings source, int defaultUpdateRate)
     {
         string sourceId = NormalizeSourceId(source.SourceId);
         string displayName = string.IsNullOrWhiteSpace(source.DisplayName) ? sourceId : source.DisplayName.Trim();
@@ -183,7 +213,8 @@ public sealed class DaRuntimeSettings
             string.IsNullOrWhiteSpace(source.Host) ? "localhost" : source.Host.Trim(),
             string.IsNullOrWhiteSpace(source.RemoteUsername) ? null : source.RemoteUsername.Trim(),
             string.IsNullOrWhiteSpace(source.RemotePassword) ? null : source.RemotePassword,
-            string.IsNullOrWhiteSpace(source.RemoteDomain) ? null : source.RemoteDomain.Trim());
+            string.IsNullOrWhiteSpace(source.RemoteDomain) ? null : source.RemoteDomain.Trim(),
+            NormalizeUpdateRate(source.UpdateRateMs <= 0 ? defaultUpdateRate : source.UpdateRateMs));
     }
 
     private static string NormalizeSourceId(string? sourceId)
@@ -228,9 +259,10 @@ public sealed record DaSourceRuntimeSettings(
     string Host,
     string? RemoteUsername,
     string? RemotePassword,
-    string? RemoteDomain)
+    string? RemoteDomain,
+    int UpdateRateMs)
 {
-    public DaClientOptions ToOptions(int updateRateMs)
+    public DaClientOptions ToOptions()
     {
         return new DaClientOptions
         {
@@ -238,7 +270,7 @@ public sealed record DaSourceRuntimeSettings(
             DisplayName = DisplayName,
             ProgId = ProgId,
             Host = Host,
-            UpdateRateMs = updateRateMs,
+            UpdateRateMs = UpdateRateMs,
             RemoteUsername = RemoteUsername,
             RemotePassword = RemotePassword,
             RemoteDomain = RemoteDomain

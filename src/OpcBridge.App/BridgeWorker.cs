@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using OpcBridge.Core;
@@ -11,6 +12,7 @@ namespace OpcBridge.App;
 public sealed class BridgeWorker : BackgroundService
 {
     private const int MaxConcurrentSourcePolls = 8;
+    private const int CoordinatorTickMs = 200;
 
     private readonly UaServerHost ua_server_;
     private readonly BridgeState bridge_state_;
@@ -51,6 +53,11 @@ public sealed class BridgeWorker : BackgroundService
             long uaMappingVersion = mappingVersion;
             long connectedVersion = -1;
             Dictionary<string, SourceSession> sessions = new(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, Task> pollers = new(StringComparer.OrdinalIgnoreCase);
+            CancellationTokenSource pollerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            SharedCacheHolder cacheHolder = new(sourceMappingCache);
+            ConcurrentQueue<string> failedSourceQueue = new();
+            using SemaphoreSlim concurrencyGate = new(MaxConcurrentSourcePolls);
 
             try
             {
@@ -61,46 +68,40 @@ public sealed class BridgeWorker : BackgroundService
 
                     try
                     {
+                        if (!failedSourceQueue.IsEmpty)
+                        {
+                            failedSourceQueue.Clear();
+                            await StopPollersAsync(pollers, pollerCts).ConfigureAwait(false);
+                            pollerCts.Dispose();
+                            await DisposeSessionsAsync(sessions).ConfigureAwait(false);
+                            sessions.Clear();
+                            connectedVersion = -1;
+                            pollerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                        }
+
                         if (mappingVersion != uaMappingVersion)
                         {
-                            sourceMappingCache = SourceMappingCache.Build(mappings);
-                            activeMappings = sourceMappingCache.GetActiveMappings();
+                            cacheHolder.Cache = SourceMappingCache.Build(mappings);
+                            activeMappings = cacheHolder.Cache.GetActiveMappings();
                             ua_server_.SyncMappings(activeMappings);
                             bridge_state_.RetainMappedValues(activeMappings);
                             uaMappingVersion = mappingVersion;
-                            connectedVersion = -1;
                             bridge_state_.UpdateSources(settings.UpdateRateMs, activeMappings.Count, settings.Sources);
                             logger_.LogInformation("Applied tag mapping change: {Count} mappings", activeMappings.Count);
                         }
 
                         if (connectedVersion != settings.Version)
                         {
+                            await StopPollersAsync(pollers, pollerCts).ConfigureAwait(false);
+                            pollerCts.Dispose();
                             await ReconfigureSessionsAsync(settings, sessions, stoppingToken).ConfigureAwait(false);
                             connectedVersion = settings.Version;
                             bridge_state_.UpdateSources(settings.UpdateRateMs, activeMappings.Count, settings.Sources);
+                            pollerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                            StartPollers(settings, sessions, cacheHolder, concurrencyGate, failedSourceQueue, pollers, pollerCts.Token);
                         }
 
-                        Stopwatch cycleTimer = Stopwatch.StartNew();
-                        SourcePollSummary pollSummary = await PollSourcesAsync(
-                            settings,
-                            sessions,
-                            sourceMappingCache,
-                            stoppingToken).ConfigureAwait(false);
-                        cycleTimer.Stop();
-
-                        if (pollSummary.FailedSourceIds.Count > 0)
-                        {
-                            await DisposeFailedSessionsAsync(sessions, pollSummary.FailedSourceIds).ConfigureAwait(false);
-                            connectedVersion = -1;
-                        }
-
-                        if (pollSummary.AnySuccess)
-                        {
-                            bridge_state_.SetBridgeState("Running");
-                            bridge_state_.MarkUaWrite(pollSummary.TotalValueCount, cycleTimer.Elapsed);
-                        }
-
-                        await Task.Delay(settings.UpdateRateMs, stoppingToken).ConfigureAwait(false);
+                        await Task.Delay(CoordinatorTickMs, stoppingToken).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                     {
@@ -109,16 +110,21 @@ public sealed class BridgeWorker : BackgroundService
                     catch (Exception exception)
                     {
                         bridge_state_.SetError(exception);
-                        logger_.LogError(exception, "Bridge loop failed");
+                        logger_.LogError(exception, "Bridge coordinator loop failed");
+                        await StopPollersAsync(pollers, pollerCts).ConfigureAwait(false);
+                        pollerCts.Dispose();
                         await DisposeSessionsAsync(sessions).ConfigureAwait(false);
                         sessions.Clear();
                         connectedVersion = -1;
+                        pollerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
                         await Task.Delay(settings.UpdateRateMs, stoppingToken).ConfigureAwait(false);
                     }
                 }
             }
             finally
             {
+                await StopPollersAsync(pollers, pollerCts).ConfigureAwait(false);
+                pollerCts.Dispose();
                 await DisposeSessionsAsync(sessions).ConfigureAwait(false);
             }
         }
@@ -137,15 +143,15 @@ public sealed class BridgeWorker : BackgroundService
         bridge_state_.SetBridgeState("Stopped");
     }
 
-    private async Task<SourcePollSummary> PollSourcesAsync(
+    private void StartPollers(
         DaRuntimeSettingsSnapshot settings,
         Dictionary<string, SourceSession> sessions,
-        SourceMappingCache sourceMappingCache,
-        CancellationToken cancellationToken)
+        SharedCacheHolder cacheHolder,
+        SemaphoreSlim concurrencyGate,
+        ConcurrentQueue<string> failedSourceQueue,
+        Dictionary<string, Task> pollers,
+        CancellationToken pollerToken)
     {
-        using SemaphoreSlim concurrencyGate = new(MaxConcurrentSourcePolls);
-        List<Task<SourcePollResult>> pollTasks = new(settings.Sources.Count);
-
         for (int i = 0; i < settings.Sources.Count; i++)
         {
             DaSourceRuntimeSettings source = settings.Sources[i];
@@ -154,13 +160,93 @@ public sealed class BridgeWorker : BackgroundService
                 continue;
             }
 
-            IReadOnlyList<TagMapping> sourceReadMappings = sourceMappingCache.GetSourceReadMappings(source.SourceId);
-            IReadOnlyList<TagMapping> manualMappings = sourceMappingCache.GetManualMappings(source.SourceId);
-            pollTasks.Add(PollSourceAsync(source, session, sourceReadMappings, manualMappings, concurrencyGate, cancellationToken));
+            pollers[source.SourceId] = Task.Run(() => RunSourcePollerAsync(
+                source,
+                session,
+                cacheHolder,
+                concurrencyGate,
+                failedSourceQueue,
+                pollerToken));
         }
+    }
 
-        SourcePollResult[] results = await Task.WhenAll(pollTasks).ConfigureAwait(false);
-        return SourcePollSummary.FromResults(results);
+    private async Task RunSourcePollerAsync(
+        DaSourceRuntimeSettings source,
+        SourceSession session,
+        SharedCacheHolder cacheHolder,
+        SemaphoreSlim concurrencyGate,
+        ConcurrentQueue<string> failedSourceQueue,
+        CancellationToken pollerToken)
+    {
+        while (!pollerToken.IsCancellationRequested)
+        {
+            int rate = source.UpdateRateMs;
+
+            try
+            {
+                DaRuntimeSettingsSnapshot currentSettings = da_settings_.GetSnapshot();
+                DaSourceRuntimeSettings? currentSource = currentSettings.GetSource(source.SourceId);
+                if (currentSource is not null)
+                {
+                    rate = currentSource.UpdateRateMs;
+                }
+
+                SourceMappingCache cache = cacheHolder.Cache;
+                IReadOnlyList<TagMapping> sourceReadMappings = cache.GetSourceReadMappings(source.SourceId);
+                IReadOnlyList<TagMapping> manualMappings = cache.GetManualMappings(source.SourceId);
+
+                Stopwatch cycleTimer = Stopwatch.StartNew();
+                SourcePollResult result = await PollSourceAsync(
+                    source,
+                    session,
+                    sourceReadMappings,
+                    manualMappings,
+                    concurrencyGate,
+                    pollerToken).ConfigureAwait(false);
+                cycleTimer.Stop();
+
+                bridge_state_.MarkUaWrite(result.OutputValueCount, cycleTimer.Elapsed);
+
+                if (!result.ReadSucceeded)
+                {
+                    failedSourceQueue.Enqueue(source.SourceId);
+                }
+            }
+            catch (OperationCanceledException) when (pollerToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                logger_.LogError(exception, "Source {SourceId} poller failed", source.SourceId);
+                failedSourceQueue.Enqueue(source.SourceId);
+            }
+
+            try
+            {
+                await Task.Delay(rate, pollerToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (pollerToken.IsCancellationRequested)
+            {
+                return;
+            }
+        }
+    }
+
+    private static async Task StopPollersAsync(Dictionary<string, Task> pollers, CancellationTokenSource pollerCts)
+    {
+        pollerCts.Cancel();
+        Task[] tasks = pollers.Values.ToArray();
+        pollers.Clear();
+
+        try
+        {
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Poller exceptions are logged within the poller; suppress during teardown.
+        }
     }
 
     private async Task<SourcePollResult> PollSourceAsync(
@@ -279,21 +365,6 @@ public sealed class BridgeWorker : BackgroundService
             await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
             sessions[source.SourceId] = new SourceSession(source, client);
             bridge_state_.SetSourceConnectionState(source.SourceId, "Connected");
-        }
-    }
-
-    private static async Task DisposeFailedSessionsAsync(
-        Dictionary<string, SourceSession> sessions,
-        IReadOnlyList<string> failedSourceIds)
-    {
-        for (int i = 0; i < failedSourceIds.Count; i++)
-        {
-            if (!sessions.Remove(failedSourceIds[i], out SourceSession? session))
-            {
-                continue;
-            }
-
-            await session.Client.DisposeAsync().ConfigureAwait(false);
         }
     }
 
@@ -572,31 +643,15 @@ public sealed class BridgeWorker : BackgroundService
         }
     }
 
-    private sealed record SourcePollSummary(int TotalValueCount, bool AnySuccess, IReadOnlyList<string> FailedSourceIds)
+    private sealed class SharedCacheHolder
     {
-        public static SourcePollSummary FromResults(IReadOnlyList<SourcePollResult> results)
+        public volatile SourceMappingCache Cache;
+
+        public SharedCacheHolder(SourceMappingCache cache)
         {
-            int totalValueCount = 0;
-            bool anySuccess = false;
-            List<string> failedSourceIds = new();
-
-            for (int i = 0; i < results.Count; i++)
-            {
-                SourcePollResult result = results[i];
-                totalValueCount += result.OutputValueCount;
-                anySuccess |= result.ReadSucceeded || result.OutputValueCount > 0;
-
-                if (!result.ReadSucceeded)
-                {
-                    failedSourceIds.Add(result.SourceId);
-                }
-            }
-
-            return new SourcePollSummary(totalValueCount, anySuccess, failedSourceIds);
+            Cache = cache;
         }
     }
-
-
 
     private sealed record SourceSession(DaSourceRuntimeSettings Source, IDaClient Client);
 }

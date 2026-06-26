@@ -7,4 +7,5 @@ public sealed record DaServerConfigRequest(
     string Host,
     string? RemoteUsername = null,
     string? RemotePassword = null,
-    string? RemoteDomain = null);
+    string? RemoteDomain = null,
+    int UpdateRateMs = 0);

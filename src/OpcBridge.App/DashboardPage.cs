@@ -182,7 +182,7 @@ internal static class DashboardPage
         <div class="stat"><div class="k">Last DA read</div><div class="v" id="lastDaRead">&#8212;</div><div class="s" id="lastDaReadCount">0 values</div></div>
         <div class="stat"><div class="k">Last UA write</div><div class="v" id="lastUaWrite">&#8212;</div><div class="s" id="lastUaWriteCount">0 values</div></div>
         <div class="stat"><div class="k">OPC UA server</div><div class="v" id="uaState">&#8212;</div><div class="s" id="uaClients">0 clients</div></div>
-        <div class="stat"><div class="k">Update rate</div><div class="v" id="updateRate">&#8212;</div><div class="s" id="mappingCount">0 tags</div><div class="mini-meter" aria-hidden="true"><div class="mini-meter-track"><div class="mini-meter-fill" id="pollUtilizationFill"></div></div></div><div class="s" id="pollUtilizationText">Cycle budget —</div><div class="s" id="pollSaturation">Cycle timing normal.</div></div>
+        <div class="stat"><div class="k">Default rate</div><div class="v" id="updateRate">&#8212;</div><div class="s" id="mappingCount">0 tags</div><div class="mini-meter" aria-hidden="true"><div class="mini-meter-track"><div class="mini-meter-fill" id="pollUtilizationFill"></div></div></div><div class="s" id="pollUtilizationText">Cycle budget —</div><div class="s" id="pollSaturation">Cycle timing normal.</div></div>
     </div>
     <div class="grid2" style="margin-bottom:14px">
         <div class="box">
@@ -217,14 +217,15 @@ internal static class DashboardPage
             <div class="field"><label class="fl">ProgID</label><input id="cfgProgId" type="text" placeholder="ProgID" style="flex:1"></div>
             <div class="field"><label class="fl">Host</label><input id="cfgHost" type="text" placeholder="localhost" style="flex:1"></div>
             <div class="field"><label class="fl">User</label><input id="cfgUser" type="text" placeholder="username" style="width:130px"><input id="cfgPass" type="password" placeholder="password" style="width:120px"><input id="cfgDomain" type="text" placeholder="domain" style="width:110px"></div>
-            <div class="field"><label class="fl">Update Rate</label><input id="cfgUpdateRate" type="text" inputmode="numeric" placeholder="1000" style="width:130px"><button class="btn ghost" id="cfgApplyRate" type="button">Apply Rate</button><span class="msg">Minimum 100 ms</span></div>
+            <div class="field"><label class="fl">Poll Rate</label><input id="cfgPollRate" type="text" inputmode="numeric" placeholder="1000" style="width:130px"><button class="btn ghost" id="cfgApplyPollRate" type="button">Apply</button><span class="msg" id="pollRateMsg">Per-source ms</span></div>
+            <div class="field"><label class="fl">Default Rate</label><input id="cfgUpdateRate" type="text" inputmode="numeric" placeholder="1000" style="width:130px"><button class="btn ghost" id="cfgApplyRate" type="button">Apply Rate</button><span class="msg">For new sources · min 100 ms</span></div>
             <div class="toolbar">
                 <button class="btn" id="cfgApply" type="button">Save Source</button>
                 <button class="btn ghost" id="cfgNew" type="button">New Source</button>
                 <button class="btn ghost" id="cfgRemove" type="button">Remove Source</button>
             </div>
             <div class="msg" id="cfgMessage">Select a source.</div>
-            <div class="msg" id="rateMessage">Bridge rate applies live to all DA sources.</div>
+            <div class="msg" id="rateMessage">Default rate applies to new sources only.</div>
         </div>
     </div>
     <div class="grid2" style="margin-top:14px">
@@ -335,9 +336,10 @@ internal static class DashboardPage
                     </ul>
                 </div>
                 <div class="doc-card">
-                    <h3>Update Rate Tuning</h3>
+                    <h3>Poll Rate Tuning</h3>
                     <ul>
-                        <li>Lower update rate means faster polling; the practical minimum is 100 ms.</li>
+                        <li>Each source has its own poll rate; the default rate applies to new sources.</li>
+                        <li>Lower poll rate means faster polling; the practical minimum is 100 ms.</li>
                         <li>Watch the cycle-budget bar: green is healthy, yellow is tight, red is saturated.</li>
                         <li>If saturation appears, increase the rate or reduce mapped load per source.</li>
                     </ul>
@@ -522,7 +524,7 @@ function renderSources() {
     mapSelect.value = state.selectedSourceId;
     el('pSources').textContent = state.sources.length;
     el('sourcesList').innerHTML = state.sources.length ? state.sources.map(source =>
-        `<div class="li source-row"><div><div class="n">${esc(source.displayName || source.sourceId)}</div><div class="p">${esc(source.sourceId)} · ${esc(source.host || 'localhost')} · ${esc(source.progId || '')}</div></div><button class="btn ghost" data-action="select-source" data-source-id="${attr(source.sourceId)}">Select</button></div>`
+        `<div class="li source-row"><div><div class="n">${esc(source.displayName || source.sourceId)}</div><div class="p">${esc(source.sourceId)} · ${esc(source.host || 'localhost')} · ${esc(source.progId || '')} · ${formatMs(source.updateRateMs)}</div></div><button class="btn ghost" data-action="select-source" data-source-id="${attr(source.sourceId)}">Select</button></div>`
     ).join('') : '<span class="msg">No sources configured.</span>';
     loadSelectedSourceForm();
 }
@@ -538,6 +540,7 @@ function loadSelectedSourceForm() {
     el('cfgUser').value = source.remoteUsername || '';
     el('cfgPass').value = '';
     el('cfgDomain').value = source.remoteDomain || '';
+    el('cfgPollRate').value = source.updateRateMs || '';
     el('cfgMessage').textContent = 'Editing source ' + (source.displayName || source.sourceId) + '. Source ID is fixed; create a new source for another ID.';
 }
 async function loadSources() {
@@ -672,7 +675,7 @@ async function refresh() {
         el('uaEndpoint').textContent = get(ua, 'endpointUrl') || '—';
         el('uaDiagnostics').textContent = formatUaDiagnostics(ua);
         el('sourceStatusList').innerHTML = sources.length ? sources.map(source =>
-            `<div class="li"><div style="flex:1"><div class="n">${esc(get(source,'displayName') || get(source,'sourceId'))}</div><div class="p">${esc(get(source,'sourceId'))} · ${esc(get(source,'host') || '')} · ${esc(get(source,'progId') || '')} · ${(get(source,'lastDaReadCount') ?? 0)} values in ${formatMs(get(source,'lastDaReadDurationMs'))}</div></div><div>${badge(get(source,'connectionState') || '—', stateClass(get(source,'connectionState')))}</div></div>`
+            `<div class="li"><div style="flex:1"><div class="n">${esc(get(source,'displayName') || get(source,'sourceId'))}</div><div class="p">${esc(get(source,'sourceId'))} · ${esc(get(source,'host') || '')} · ${esc(get(source,'progId') || '')} · ${formatMs(get(source,'updateRateMs'))} · ${(get(source,'lastDaReadCount') ?? 0)} values in ${formatMs(get(source,'lastDaReadDurationMs'))}</div></div><div>${badge(get(source,'connectionState') || '—', stateClass(get(source,'connectionState')))}</div></div>`
         ).join('') : '<span class="msg">No source status yet.</span>';
         state.lastValueCount = vs.length;
         updateLiveValuesUi();
@@ -760,6 +763,7 @@ async function saveSource() {
         displayName: el('cfgDisplayName').value.trim() || null,
         progId: el('cfgProgId').value.trim(),
         host: el('cfgHost').value.trim() || 'localhost',
+        updateRateMs: Number.parseInt(el('cfgPollRate').value.trim(), 10) || 0,
         remoteUsername: el('cfgUser').value.trim() || null,
         remotePassword: el('cfgPass').value || null,
         remoteDomain: el('cfgDomain').value.trim() || null
@@ -792,6 +796,30 @@ async function saveUpdateRate() {
     await refresh();
     el('rateMessage').textContent = 'Update rate applied: ' + state.updateRateMs + ' ms.';
 }
+async function savePollRate() {
+    const source = currentSource();
+    if (!source || state.editingNewSource) {
+        el('pollRateMsg').textContent = '✗ Select a source first.';
+        return;
+    }
+    const rate = Number.parseInt(el('cfgPollRate').value.trim(), 10);
+    if (!Number.isFinite(rate) || rate <= 0) {
+        el('pollRateMsg').textContent = '✗ Enter a poll rate in milliseconds.';
+        return;
+    }
+
+    const r = await fetch('/api/da/sources/update-rate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceId: source.sourceId, updateRateMs: rate })
+    });
+    const p = await r.json();
+    if (!r.ok) throw new Error(p.error || ('HTTP ' + r.status));
+    el('cfgPollRate').value = p.updateRateMs || rate;
+    await loadSources();
+    await refresh();
+    el('pollRateMsg').textContent = 'Poll rate applied: ' + (p.updateRateMs || rate) + ' ms.';
+}
 async function removeSelectedSource() {
     const source = currentSource();
     if (!source || state.editingNewSource) return;
@@ -818,6 +846,7 @@ function newSource() {
     el('cfgUser').value = '';
     el('cfgPass').value = '';
     el('cfgDomain').value = '';
+    el('cfgPollRate').value = state.updateRateMs || '';
     el('tagTree').innerHTML = '<span class="msg">Save the new source before browsing tags.</span>';
     el('cfgMessage').textContent = 'Enter a unique Source ID, then save.';
 }
@@ -1033,6 +1062,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     el('cfgNew').addEventListener('click', newSource);
     el('cfgRemove').addEventListener('click', () => removeSelectedSource().catch(e => el('cfgMessage').textContent = '✗ ' + e.message));
     el('cfgApplyRate').addEventListener('click', () => saveUpdateRate().catch(e => el('rateMessage').textContent = '✗ ' + e.message));
+    el('cfgApplyPollRate').addEventListener('click', () => savePollRate().catch(e => el('pollRateMsg').textContent = '✗ ' + e.message));
     el('btnReloadServers').addEventListener('click', () => browseServers().catch(e => el('msgServers').textContent = e.message));
     el('btnBrowseTags').addEventListener('click', () => browseTags('').catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
     el('btnBrowseAllTags').addEventListener('click', () => browseTags('', true).catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));

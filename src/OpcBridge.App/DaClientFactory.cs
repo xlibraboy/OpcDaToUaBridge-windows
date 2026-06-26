@@ -6,6 +6,6 @@ public sealed class DaClientFactory
 {
     public IDaClient Create(DaRuntimeSettingsSnapshot settings, DaSourceRuntimeSettings source)
     {
-        return new OpcDaClient(source.ToOptions(settings.UpdateRateMs));
+        return new OpcDaClient(source.ToOptions());
     }
 }

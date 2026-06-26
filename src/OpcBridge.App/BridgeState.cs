@@ -17,6 +17,7 @@ public sealed class BridgeState
                 source.DisplayName,
                 source.Host,
                 source.ProgId,
+                source.UpdateRateMs,
                 "Disconnected",
                 null,
                 null,
@@ -61,6 +62,7 @@ public sealed class BridgeState
                         source.DisplayName,
                         source.Host,
                         source.ProgId,
+                        source.UpdateRateMs,
                         "Disconnected",
                         null,
                         null,
@@ -73,7 +75,8 @@ public sealed class BridgeState
                     {
                         DisplayName = source.DisplayName,
                         Host = source.Host,
-                        ProgId = source.ProgId
+                        ProgId = source.ProgId,
+                        UpdateRateMs = source.UpdateRateMs
                     };
                 }
 
@@ -372,6 +375,7 @@ public sealed record DaSourceStatusSnapshot(
     string DisplayName,
     string Host,
     string ProgId,
+    int UpdateRateMs,
     string ConnectionState,
     DateTime? LastDaReadUtc,
     string? LastError,
