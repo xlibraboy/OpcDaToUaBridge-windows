@@ -299,7 +299,7 @@ internal static class DashboardPage
         <div class="modal-f">
             <div class="field"><label class="fl" style="width:auto">Enabled</label><input type="checkbox" id="fpEnabled" data-action="toggle-tag-enabled"></div>
             <div class="field"><label class="fl" style="width:auto">Mode</label><select id="fpMode" data-action="tag-mode"><option value="Source">Source</option><option value="Manual">Manual</option></select></div>
-            <div class="field"><label class="fl" style="width:auto">Poll Rate</label><input id="fpPollRate" type="text" inputmode="numeric" placeholder="0" style="width:80px"><span class="msg">ms · 0 = source default</span></div>
+            <div class="field"><label class="fl" style="width:auto">Poll Rate</label><select id="fpPollRate" data-action="tag-poll-rate"><option value="0">Source Default</option><option value="100">100 ms</option><option value="250">250 ms</option><option value="500">500 ms</option><option value="1000">1 s</option><option value="2000">2 s</option><option value="5000">5 s</option><option value="10000">10 s</option></select></div>
             <button class="btn ghost" type="button" id="fpApply" data-action="save-tag">Apply</button>
             <button class="btn ghost" type="button" id="fpRemove" data-action="remove-mapping">Remove</button>
         </div>
@@ -452,7 +452,7 @@ function openFaceplate(sourceId, itemId) {
     el('fpManualInput').value = String(manualValue ?? '');
     el('fpManualInput').disabled = mode !== 'Manual';
     const pollRate = mapping.pollRateMs ?? mapping.PollRateMs ?? 0;
-    el('fpPollRate').value = pollRate || '';
+    el('fpPollRate').value = String(pollRate);
     el('fpModeHint').textContent = 'Mode ' + mode;
     el('fpApply').dataset.sourceId = sourceId;
     el('fpApply').dataset.itemId = itemId;
@@ -1028,7 +1028,7 @@ function bindDynamicButtons() {
         if (button.dataset.action === 'save-tag') {
             updateMapping(sourceId, itemId, payload => {
                 payload.mode = el('fpMode').value || 'Source';
-                payload.pollRateMs = Number.parseInt(el('fpPollRate').value.trim(), 10) || 0;
+                payload.pollRateMs = Number.parseInt(el('fpPollRate').value, 10) || 0;
                 if (payload.mode === 'Manual') {
                     const manualField = el('fpManualInput');
                     if (!manualField.value.trim()) {
