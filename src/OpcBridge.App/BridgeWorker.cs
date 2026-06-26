@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging;
 using OpcBridge.Core;
 using OpcBridge.Da;
@@ -19,6 +20,7 @@ public sealed class BridgeWorker : BackgroundService
     private readonly DaRuntimeSettings da_settings_;
     private readonly DaClientFactory da_client_factory_;
     private readonly ILogger<BridgeWorker> logger_;
+    private readonly IReadOnlyDictionary<int, int> rate_limits_;
 
     public BridgeWorker(
         UaServerHost uaServer,
@@ -26,6 +28,7 @@ public sealed class BridgeWorker : BackgroundService
         MappingStore mappingStore,
         DaRuntimeSettings daSettings,
         DaClientFactory daClientFactory,
+        IOptions<BridgeOptions> bridgeOptions,
         ILogger<BridgeWorker> logger)
     {
         ua_server_ = uaServer;
@@ -34,6 +37,7 @@ public sealed class BridgeWorker : BackgroundService
         da_settings_ = daSettings;
         da_client_factory_ = daClientFactory;
         logger_ = logger;
+        rate_limits_ = bridgeOptions.Value.RateLimits;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -91,6 +95,7 @@ public sealed class BridgeWorker : BackgroundService
 
                         if (connectedVersion != settings.Version)
                         {
+                            bridge_state_.ClearRateGroups();
                             await StopPollersAsync(pollers, pollerCts).ConfigureAwait(false);
                             pollerCts.Dispose();
                             await ReconfigureSessionsAsync(settings, sessions, stoppingToken).ConfigureAwait(false);
@@ -207,6 +212,7 @@ public sealed class BridgeWorker : BackgroundService
                 cycleTimer.Stop();
 
                 bridge_state_.MarkUaWrite(result.OutputValueCount, cycleTimer.Elapsed);
+                bridge_state_.UpdateRateGroup(source.SourceId, rate, sourceReadMappings.Count, GetRateLimit(rate), cycleTimer.Elapsed);
 
                 if (!result.ReadSucceeded)
                 {
@@ -248,6 +254,11 @@ public sealed class BridgeWorker : BackgroundService
         {
             // Poller exceptions are logged within the poller; suppress during teardown.
         }
+    }
+
+    private int GetRateLimit(int rateMs)
+    {
+        return rate_limits_.TryGetValue(rateMs, out int limit) ? limit : 0;
     }
 
     private async Task<SourcePollResult> PollSourceAsync(

@@ -59,6 +59,10 @@ internal static class DashboardPage
         .mon-stat-group .stat .v { font-size: 15px; }
         .mon-stat-group .stat .v .badge { font-size: 13px; }
         .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 7px; padding: 11px 13px; }
+        .alarm-bar { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-radius: 7px; margin-bottom: 14px; font-size: 12px; font-weight: 600; }
+        .alarm-bar.ok { background: rgba(52,211,153,.1); border: 1px solid rgba(52,211,153,.3); color: var(--good); }
+        .alarm-bar.warning { background: rgba(251,191,36,.1); border: 1px solid rgba(251,191,36,.3); color: var(--warn); }
+        .alarm-bar.bad { background: rgba(248,113,113,.1); border: 1px solid rgba(248,113,113,.3); color: var(--bad); }
         .stat .k { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
         .stat .v { margin-top: 6px; font-size: 16px; font-weight: 700; line-height: 1.1; }
         .stat .s { margin-top: 4px; color: var(--muted); font-size: 11px; }
@@ -189,6 +193,7 @@ internal static class DashboardPage
 </div>
 <div class="content">
 <div class="view active" id="view-monitor">
+    <div class="alarm-bar" id="rateAlarmBar" style="display:none"></div>
     <div class="mon-stats">
         <div class="mon-stat-group">
             <div class="mon-stat-group-h">Bridge</div>
@@ -726,6 +731,27 @@ async function refresh() {
             const connClass = stateClass(connState);
             return `<div class="li"><div style="flex:1"><div class="n">${esc(get(source,'displayName') || get(source,'sourceId'))} ${badge(connState, connClass)}</div><div class="p">${esc(get(source,'sourceId'))} · ${esc(get(source,'host') || '')} · ${esc(get(source,'progId') || '')}</div><div class="p">${formatMs(get(source,'updateRateMs'))} · ${(get(source,'lastDaReadCount') ?? 0)} values in ${formatMs(get(source,'lastDaReadDurationMs'))}${get(source,'lastError') ? ' · <span class="bad">' + esc(get(source,'lastError')) + '</span>' : ''}</div></div></div>`;
         }).join('') : '<span class="msg">No source status yet.</span>';
+        const rateGroups = get(b, 'rateGroups') || [];
+        const alarmBar = el('rateAlarmBar');
+        if (alarmBar) {
+            const problems = rateGroups.filter(g => g.status === 'limit-exceeded' || g.status === 'saturated');
+            const warnings = rateGroups.filter(g => g.status === 'warning');
+            if (problems.length > 0) {
+                alarmBar.style.display = 'flex';
+                alarmBar.className = 'alarm-bar bad';
+                alarmBar.innerHTML = problems.map(g => `${esc(g.sourceId)} ${formatMs(g.rateMs)}: ${g.status === 'limit-exceeded' ? g.tagCount + '/' + g.tagLimit + ' tags exceed limit' : Math.round(g.cycleBudgetPct) + '% cycle budget'}`).join(' · ');
+            } else if (warnings.length > 0) {
+                alarmBar.style.display = 'flex';
+                alarmBar.className = 'alarm-bar warning';
+                alarmBar.innerHTML = warnings.map(g => `${esc(g.sourceId)} ${formatMs(g.rateMs)}: ${Math.round(g.cycleBudgetPct)}% cycle budget`).join(' · ');
+            } else if (rateGroups.length > 0) {
+                alarmBar.style.display = 'flex';
+                alarmBar.className = 'alarm-bar ok';
+                alarmBar.textContent = rateGroups.length + ' rate group' + (rateGroups.length !== 1 ? 's' : '') + ' · all within limits';
+            } else {
+                alarmBar.style.display = 'none';
+            }
+        }
         state.lastValueCount = vs.length;
         updateLiveValuesUi();
         if (state.liveValuesEnabled) {

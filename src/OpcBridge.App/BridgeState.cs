@@ -6,8 +6,9 @@ namespace OpcBridge.App;
 public sealed class BridgeState
 {
     private readonly ConcurrentDictionary<string, BridgeValueSnapshot> values_by_key_ = new(StringComparer.OrdinalIgnoreCase);
-    private readonly object status_lock_ = new();
+    private readonly Dictionary<string, RateGroupStatus> rate_groups_ = new(StringComparer.OrdinalIgnoreCase);
     private BridgeRuntimeStatus status_ = BridgeRuntimeStatus.Empty;
+    private readonly object status_lock_ = new();
 
     public void Configure(int updateRateMs, int mappingCount, IReadOnlyList<DaSourceRuntimeSettings> sources)
     {
@@ -25,6 +26,7 @@ public sealed class BridgeState
                 0))
             .ToArray();
 
+        rate_groups_.Clear();
         lock (status_lock_)
         {
             status_ = status_ with
@@ -268,6 +270,33 @@ public sealed class BridgeState
         }
     }
 
+    public void UpdateRateGroup(string sourceId, int rateMs, int tagCount, int tagLimit, TimeSpan readDuration)
+    {
+        string key = $"{sourceId}:{rateMs}";
+        double durationMs = ToMilliseconds(readDuration);
+        double budgetPct = rateMs > 0 ? Math.Min(100, durationMs / rateMs * 100) : 0;
+
+        string status = "ok";
+        if (tagLimit > 0 && tagCount > tagLimit) status = "limit-exceeded";
+        else if (budgetPct >= 80) status = "saturated";
+        else if (budgetPct >= 50) status = "warning";
+
+        lock (status_lock_)
+        {
+            rate_groups_[key] = new RateGroupStatus(sourceId, rateMs, tagCount, tagLimit, durationMs, budgetPct, status);
+            status_ = status_ with { RateGroups = rate_groups_.Values.OrderBy(g => g.SourceId).ThenBy(g => g.RateMs).ToArray() };
+        }
+    }
+
+    public void ClearRateGroups()
+    {
+        lock (status_lock_)
+        {
+            rate_groups_.Clear();
+            status_ = status_ with { RateGroups = Array.Empty<RateGroupStatus>() };
+        }
+    }
+
     public IReadOnlyList<BridgeValueSnapshot> GetValues()
     {
         return values_by_key_.Values
@@ -353,7 +382,8 @@ public sealed record BridgeRuntimeStatus(
     double LastPollDurationMs,
     double LastPollValueRate,
     string? LastError,
-    IReadOnlyList<DaSourceStatusSnapshot> Sources)
+    IReadOnlyList<DaSourceStatusSnapshot> Sources,
+    IReadOnlyList<RateGroupStatus> RateGroups)
 {
     public static BridgeRuntimeStatus Empty { get; } = new(
         "Stopped",
@@ -367,8 +397,18 @@ public sealed record BridgeRuntimeStatus(
         0,
         0,
         null,
-        Array.Empty<DaSourceStatusSnapshot>());
+        Array.Empty<DaSourceStatusSnapshot>(),
+        Array.Empty<RateGroupStatus>());
 }
+
+public sealed record RateGroupStatus(
+    string SourceId,
+    int RateMs,
+    int TagCount,
+    int TagLimit,
+    double LastReadDurationMs,
+    double CycleBudgetPct,
+    string Status);
 
 public sealed record DaSourceStatusSnapshot(
     string SourceId,
