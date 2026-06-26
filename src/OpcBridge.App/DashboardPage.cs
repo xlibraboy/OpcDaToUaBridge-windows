@@ -677,15 +677,45 @@ async function loadAppInfo(force = false) {
 }
 
 let helpLoaded = false;
+function renderMarkdown(md) {
+    const lines = md.split('\n');
+    let html = '', inList = false, inTable = false, tableHeader = false;
+    const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
+    const closeTable = () => { if (inTable) { html += '</tbody></table>'; inTable = false; } };
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+        if (/^---\s*$/.test(line)) { closeList(); closeTable(); html += '<hr>'; continue; }
+        if (/^#\s+/.test(line)) { closeList(); closeTable(); html += `<h1>${line.replace(/^#\s+/, '')}</h1>`; continue; }
+        if (/^##\s+/.test(line)) { closeList(); closeTable(); html += `<h2>${line.replace(/^##\s+/, '')}</h2>`; continue; }
+        if (/^###\s+/.test(line)) { closeList(); closeTable(); html += `<h3>${line.replace(/^###\s+/, '')}</h3>`; continue; }
+        if (/^####\s+/.test(line)) { closeList(); closeTable(); html += `<h4>${line.replace(/^####\s+/, '')}</h4>`; continue; }
+        if (/^\*\s+|^-\s+/.test(line)) { closeTable(); if (!inList) { html += '<ul>'; inList = true; } html += `<li>${line.replace(/^\*\s+|^-\s+/, '')}</li>`; continue; }
+        closeList();
+        if (/^\|/.test(line)) {
+            if (line.replace(/\s/g, '').match(/^\|[-:|]+\|$/)) { tableHeader = true; continue; }
+            const cells = line.split('|').filter((_, j, a) => j > 0 && j < a.length - 1).map(c => c.trim());
+            if (!inTable) { html += '<table><thead><tr>'; html += cells.map(c => `<th>${c}</th>`).join(''); html += '</tr></thead><tbody>'; inTable = true; tableHeader = false; }
+            else if (tableHeader) { tableHeader = false; continue; }
+            else { html += '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>'; }
+            continue;
+        }
+        closeTable();
+        if (line.trim() === '') continue;
+        if (/^\*/.test(line) && /\*$/.test(line)) { html += `<p><em>${line.replace(/^\*|\*$/g, '')}</em></p>`; }
+        else { html += `<p>${line}</p>`; }
+    }
+    closeList(); closeTable();
+    return html.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`(.+?)`/g, '<code>$1</code>');
+}
 async function loadHelp() {
     if (helpLoaded) return;
     const p = await (await fetch('/api/help', { cache: 'no-store' })).json();
-    const sections = (p.html || '').split(/<hr\s*\/?>/i).filter(s => s.trim());
+    const sections = (p.markdown || '').split(/\n---\n/).filter(s => s.trim());
     const container = el('helpContent');
     container.innerHTML = sections.map((section, i) => {
-        const titleMatch = section.match(/<h1[^>]*>(.*?)<\/h1>/i);
-        const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '') : 'Section';
-        const body = section.replace(/<h1[^>]*>.*?<\/h1>/i, '');
+        const titleMatch = section.match(/^#\s+(.+)/m);
+        const title = titleMatch ? titleMatch[1] : 'Section';
+        const body = renderMarkdown(section.replace(/^#\s+.+/m, ''));
         const openAttr = i < 2 ? ' open' : '';
         return `<details class="help-section"${openAttr}><summary>${esc(title)}</summary><div class="help-body">${body}</div></details>`;
     }).join('');
