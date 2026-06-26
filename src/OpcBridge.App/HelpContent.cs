@@ -15,10 +15,9 @@ internal static class HelpContent
 # Poll Rate & Tag Limits
 
 - Each tag can be assigned its own poll rate via the faceplate (Tags tab → click a tag). Tags with the same rate share one OPC DA group.
-- The default rate (Connection tab → Polling section) applies only to new sources and tags set to "Source Default".
+- Tags set to "Source Default" (poll rate = 0) inherit the global **Default Rate** (Connection tab).
+- The global Default Rate is the single fallback for all tags without an explicit rate.
 - Watch the alarm bar on the Monitor tab: <span class="good">green</span> = within limits, <span class="warn">yellow</span> = cycle budget warning, <span class="bad">red</span> = limit exceeded or saturated.
-
-## Default tag limits per rate
 
 *(appsettings.json → `Bridge:RateLimits`)*
 

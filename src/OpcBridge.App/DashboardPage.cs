@@ -285,9 +285,8 @@ internal static class DashboardPage
                         <div class="field"><label class="fl">User</label><input id="cfgUser" type="text" placeholder="username" style="flex:1"><input id="cfgPass" type="password" placeholder="password" style="flex:1"><input id="cfgDomain" type="text" placeholder="domain" style="flex:1"></div>
                     </div>
                     <div class="conn-section">
-                        <div class="conn-section-h">Polling</div>
-                        <div class="field"><label class="fl">Poll Rate</label><select id="cfgPollRate"><option value="0">Source Default</option><option value="100">100 ms</option><option value="250">250 ms</option><option value="500">500 ms</option><option value="1000">1 s</option><option value="2000">2 s</option><option value="5000">5 s</option><option value="10000">10 s</option></select><button class="btn ghost" id="cfgApplyPollRate" type="button">Apply</button><span class="msg" id="pollRateMsg">Per-source</span></div>
-                        <div class="field"><label class="fl">Default Rate</label><select id="cfgUpdateRate"><option value="100">100 ms</option><option value="250">250 ms</option><option value="500">500 ms</option><option value="1000">1 s</option><option value="2000">2 s</option><option value="5000">5 s</option><option value="10000">10 s</option></select><button class="btn ghost" id="cfgApplyRate" type="button">Apply</button><span class="msg" id="rateMessage">For new sources</span></div>
+                        <div class="conn-section-h">Default Rate <span class="msg" style="text-transform:none;letter-spacing:0">fallback for tags set to Source Default</span></div>
+                        <div class="field"><label class="fl">Rate</label><select id="cfgUpdateRate"><option value="100">100 ms</option><option value="250">250 ms</option><option value="500">500 ms</option><option value="1000">1 s</option><option value="2000">2 s</option><option value="5000">5 s</option><option value="10000">10 s</option></select><button class="btn ghost" id="cfgApplyRate" type="button">Apply</button><span class="msg" id="rateMessage">Applies live</span></div>
                     </div>
                     <div class="toolbar" style="margin-top:12px">
                         <button class="btn" id="cfgApply" type="button">Save Source</button>
@@ -586,7 +585,6 @@ function loadSelectedSourceForm() {
     el('cfgUser').value = source.remoteUsername || '';
     el('cfgPass').value = '';
     el('cfgDomain').value = source.remoteDomain || '';
-    el('cfgPollRate').value = String(source.updateRateMs || 0);
     el('cfgMessage').textContent = 'Editing source ' + (source.displayName || source.sourceId) + '. Source ID is fixed; create a new source for another ID.';
 }
 async function loadSources() {
@@ -848,7 +846,6 @@ async function saveSource() {
         displayName: el('cfgDisplayName').value.trim() || null,
         progId: el('cfgProgId').value.trim(),
         host: el('cfgHost').value.trim() || 'localhost',
-        updateRateMs: Number.parseInt(el('cfgPollRate').value, 10) || 0,
         remoteUsername: el('cfgUser').value.trim() || null,
         remotePassword: el('cfgPass').value || null,
         remoteDomain: el('cfgDomain').value.trim() || null
@@ -881,30 +878,6 @@ async function saveUpdateRate() {
     await refresh();
     el('rateMessage').textContent = 'Default rate applied: ' + state.updateRateMs + ' ms.';
 }
-async function savePollRate() {
-    const source = currentSource();
-    if (!source || state.editingNewSource) {
-        el('pollRateMsg').textContent = '✗ Select a source first.';
-        return;
-    }
-    const rate = Number.parseInt(el('cfgPollRate').value, 10);
-    if (!Number.isFinite(rate) || rate < 0) {
-        el('pollRateMsg').textContent = '✗ Select a rate.';
-        return;
-    }
-
-    const r = await fetch('/api/da/sources/update-rate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourceId: source.sourceId, updateRateMs: rate })
-    });
-    const p = await r.json();
-    if (!r.ok) throw new Error(p.error || ('HTTP ' + r.status));
-    el('cfgPollRate').value = String(p.updateRateMs || rate);
-    await loadSources();
-    await refresh();
-    el('pollRateMsg').textContent = 'Poll rate applied: ' + (p.updateRateMs || rate) + ' ms.';
-}
 async function removeSelectedSource() {
     const source = currentSource();
     if (!source || state.editingNewSource) return;
@@ -931,7 +904,6 @@ function newSource() {
     el('cfgUser').value = '';
     el('cfgPass').value = '';
     el('cfgDomain').value = '';
-    el('cfgPollRate').value = String(state.updateRateMs || 0);
     el('tagTree').innerHTML = '<span class="msg">Save the new source before browsing tags.</span>';
     el('cfgMessage').textContent = 'Enter a unique Source ID, then save.';
 }
@@ -1148,7 +1120,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     el('cfgNew').addEventListener('click', newSource);
     el('cfgRemove').addEventListener('click', () => removeSelectedSource().catch(e => el('cfgMessage').textContent = '✗ ' + e.message));
     el('cfgApplyRate').addEventListener('click', () => saveUpdateRate().catch(e => el('rateMessage').textContent = '✗ ' + e.message));
-    el('cfgApplyPollRate').addEventListener('click', () => savePollRate().catch(e => el('pollRateMsg').textContent = '✗ ' + e.message));
     el('btnReloadServers').addEventListener('click', () => browseServers().catch(e => el('msgServers').textContent = e.message));
     el('btnBrowseTags').addEventListener('click', () => browseTags('').catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
     el('btnBrowseAllTags').addEventListener('click', () => browseTags('', true).catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));

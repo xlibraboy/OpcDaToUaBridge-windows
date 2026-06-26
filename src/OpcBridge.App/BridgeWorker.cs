@@ -165,7 +165,7 @@ public sealed class BridgeWorker : BackgroundService
                 continue;
             }
 
-            IReadOnlyList<int> rates = cache.GetDistinctRates(source.SourceId, source.UpdateRateMs);
+            IReadOnlyList<int> rates = cache.GetDistinctRates(source.SourceId, settings.UpdateRateMs);
             foreach (int rate in rates)
             {
                 string pollerKey = $"{source.SourceId}:{rate}";
@@ -195,8 +195,7 @@ public sealed class BridgeWorker : BackgroundService
             try
             {
                 DaRuntimeSettingsSnapshot currentSettings = da_settings_.GetSnapshot();
-                DaSourceRuntimeSettings? currentSource = currentSettings.GetSource(source.SourceId);
-                int defaultRate = currentSource is not null ? currentSource.UpdateRateMs : source.UpdateRateMs;
+                int defaultRate = currentSettings.UpdateRateMs;
 
                 SourceMappingCache cache = cacheHolder.Cache;
                 IReadOnlyList<TagMapping> sourceReadMappings = cache.GetSourceReadMappingsByRate(source.SourceId, rate, defaultRate);
