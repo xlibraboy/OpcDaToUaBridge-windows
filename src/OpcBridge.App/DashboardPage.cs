@@ -172,6 +172,8 @@ internal static class DashboardPage
         .help-body h4 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 12px 0 6px; }
         .help-body h4:first-child { margin-top: 0; }
         .help-body code { background: var(--bg); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+        .help-body pre { background: var(--bg); border: 1px solid var(--border2); border-radius: 6px; padding: 12px 14px; overflow-x: auto; margin: 10px 0; }
+        .help-body pre code { background: none; padding: 0; font-size: 12px; line-height: 1.5; font-family: 'Consolas', 'SF Mono', monospace; white-space: pre; color: var(--text); }
         .help-body h1 { display: none; }
         .help-body h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 14px 0 6px; }
         .help-body h3 { font-size: 13px; margin: 14px 0 6px; }
@@ -679,11 +681,17 @@ async function loadAppInfo(force = false) {
 let helpLoaded = false;
 function renderMarkdown(md) {
     const lines = md.replace(/\r\n/g, '\n').split('\n');
-    let html = '', inList = false, inTable = false, tableHeader = false;
+    let html = '', inList = false, inTable = false, inCode = false, tableHeader = false;
     const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
     const closeTable = () => { if (inTable) { html += '</tbody></table>'; inTable = false; } };
     for (let i = 0; i < lines.length; i++) {
         let line = lines[i];
+        if (/^```/.test(line)) {
+            if (inCode) { html += '</code></pre>'; inCode = false; }
+            else { closeList(); closeTable(); html += '<pre><code>'; inCode = true; }
+            continue;
+        }
+        if (inCode) { html += line + '\n'; continue; }
         if (/^---\s*$/.test(line)) { closeList(); closeTable(); html += '<hr>'; continue; }
         if (/^#\s+/.test(line)) { closeList(); closeTable(); html += `<h1>${line.replace(/^#\s+/, '')}</h1>`; continue; }
         if (/^##\s+/.test(line)) { closeList(); closeTable(); html += `<h2>${line.replace(/^##\s+/, '')}</h2>`; continue; }
@@ -705,6 +713,7 @@ function renderMarkdown(md) {
         else { html += `<p>${line}</p>`; }
     }
     closeList(); closeTable();
+    if (inCode) html += '</code></pre>';
     return html.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`(.+?)`/g, '<code>$1</code>');
 }
 async function loadHelp() {
