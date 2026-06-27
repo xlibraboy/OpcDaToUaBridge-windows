@@ -196,6 +196,13 @@ internal static class DashboardPage
         .conn-section:first-of-type { border-top: none; padding-top: 4px; }
         .conn-section-h { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
         .conn-section-h .msg { font-size: 10px; text-transform: none; letter-spacing: 0; }
+        .conn-flow { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+        .conn-step { flex: 1; min-width: 240px; display: flex; align-items: center; gap: 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 7px; padding: 9px 12px; font-size: 12px; color: var(--muted); }
+        .conn-step b { color: var(--text); font-weight: 600; }
+        .conn-step-num { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--bg); font-size: 11px; font-weight: 700; flex-shrink: 0; }
+        .field-hint { font-size: 11px; color: var(--muted); margin: -4px 0 8px 94px; line-height: 1.5; }
+        .field-hint code { background: var(--bg); padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+        @media (max-width: 700px) { .field-hint { margin-left: 0; } }
     </style>
 </head>
 <body>
@@ -267,52 +274,67 @@ internal static class DashboardPage
     </div>
 </div>
 <div class="view" id="view-connection">
+    <div class="conn-flow">
+        <div class="conn-step"><span class="conn-step-num">1</span><span><b>Discover</b> servers on the right, or type details manually</span></div>
+        <div class="conn-step"><span class="conn-step-num">2</span><span><b>Configure</b> identity, address, and credentials below</span></div>
+        <div class="conn-step"><span class="conn-step-num">3</span><span><b>Save</b> the connection — it appears in Saved Connections and the Tags tab</span></div>
+    </div>
     <div class="conn-layout">
         <div class="conn-main">
             <div class="box">
-                <div class="box-h">Source Configuration <span class="msg" id="cfgMessage" style="margin-left:auto;font-weight:400;text-transform:none;letter-spacing:0">Select a source.</span></div>
+                <div class="box-h">Server Connection <span class="msg" id="cfgMessage" style="margin-left:auto;font-weight:400;text-transform:none;letter-spacing:0">Select a saved connection or click New.</span></div>
                 <div class="box-b">
-                    <div class="field"><label class="fl">Source</label><select id="selectedSource"></select></div>
+                    <div class="field"><label class="fl">Selected</label><select id="selectedSource"></select><span class="msg">Switch between saved connections</span></div>
                     <div class="conn-section">
                         <div class="conn-section-h">Identity</div>
                         <div class="field"><label class="fl">Source ID</label><input id="cfgSourceId" type="text" placeholder="server-a" style="flex:1"></div>
-                        <div class="field"><label class="fl">Name</label><input id="cfgDisplayName" type="text" placeholder="Server A" style="flex:1"></div>
+                        <div class="field-hint">Unique key with no spaces. Used internally and in UA Node IDs (<code>ns=2;s={sourceId}/...</code>).</div>
+                        <div class="field"><label class="fl">Display Name</label><input id="cfgDisplayName" type="text" placeholder="Production Line A" style="flex:1"></div>
+                        <div class="field-hint">Friendly label shown in lists and the Tags tab.</div>
                     </div>
                     <div class="conn-section">
-                        <div class="conn-section-h">Connection</div>
+                        <div class="conn-section-h">Server Address</div>
                         <div class="field"><label class="fl">ProgID</label><input id="cfgProgId" type="text" placeholder="Matrikon.OPC.Simulation.1" style="flex:1"></div>
+                        <div class="field-hint">Programmatic ID of the OPC DA server. Get it from the Discover panel or vendor docs.</div>
                         <div class="field"><label class="fl">Host</label><input id="cfgHost" type="text" placeholder="localhost" style="flex:1"></div>
+                        <div class="field-hint">Machine where the OPC DA server runs. Use <code>localhost</code> for this PC, or an IP/hostname for remote.</div>
                     </div>
                     <div class="conn-section">
-                        <div class="conn-section-h">Credentials <span class="msg" style="text-transform:none;letter-spacing:0">optional · for remote DCOM</span></div>
-                        <div class="field"><label class="fl">User</label><input id="cfgUser" type="text" placeholder="username" style="flex:1"><input id="cfgPass" type="password" placeholder="password" style="flex:1"><input id="cfgDomain" type="text" placeholder="domain" style="flex:1"></div>
+                        <div class="conn-section-h">Credentials <span class="msg" style="text-transform:none;letter-spacing:0">optional</span></div>
+                        <div class="field-hint" style="margin-top:0;margin-bottom:8px">Only required for remote DCOM with specific user accounts, or to access OPC DA servers registered in another user's profile.</div>
+                        <div class="field"><label class="fl">User</label><input id="cfgUser" type="text" placeholder="username" style="flex:1"><input id="cfgPass" type="password" placeholder="password" style="flex:1"><input id="cfgDomain" type="text" placeholder="domain or hostname" style="flex:1"></div>
                     </div>
                     <div class="conn-section">
-                        <div class="conn-section-h">Default Rate <span class="msg" style="text-transform:none;letter-spacing:0">fallback for tags set to Source Default</span></div>
+                        <div class="conn-section-h">Default Poll Rate</div>
+                        <div class="field-hint" style="margin-top:0;margin-bottom:8px">Fallback rate for tags that don't have an explicit poll rate (Tags tab → faceplate → Poll Rate = <i>Source Default</i>).</div>
                         <div class="field"><label class="fl">Rate</label><select id="cfgUpdateRate"><option value="100">100 ms</option><option value="250">250 ms</option><option value="500">500 ms</option><option value="1000">1 s</option><option value="2000">2 s</option><option value="5000">5 s</option><option value="10000">10 s</option></select><button class="btn ghost" id="cfgApplyRate" type="button">Apply</button><span class="msg" id="rateMessage">Applies live</span></div>
                     </div>
-                    <div class="toolbar" style="margin-top:12px">
-                        <button class="btn" id="cfgApply" type="button">Save Source</button>
-                        <button class="btn ghost" id="cfgNew" type="button">New Source</button>
-                        <button class="btn ghost" id="cfgRemove" type="button">Remove Source</button>
+                    <div class="toolbar" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+                        <button class="btn" id="cfgApply" type="button">Save Connection</button>
+                        <button class="btn ghost" id="cfgNew" type="button">New Connection</button>
+                        <button class="btn ghost" id="cfgRemove" type="button">Remove</button>
                     </div>
                 </div>
             </div>
         </div>
         <div class="conn-side">
             <div class="box">
-                <div class="box-h">Server Browser</div>
+                <div class="box-h">Discover Servers</div>
                 <div class="box-b">
+                    <div class="field-hint" style="margin-top:0;margin-bottom:8px">Find OPC DA servers installed on this machine (or a remote host). Click <b>Use</b> on a result to fill in ProgID and Host above.</div>
                     <div class="toolbar">
-                        <button class="btn ghost" id="btnReloadServers" type="button">Scan Servers</button>
-                        <span class="msg" id="msgServers">Scan local servers.</span>
+                        <button class="btn ghost" id="btnReloadServers" type="button">Scan</button>
+                        <span class="msg" id="msgServers">Scans the Host field; uses credentials if provided.</span>
                     </div>
                     <div class="list" id="listServers" style="max-height:200px"></div>
                 </div>
             </div>
             <div class="box">
-                <div class="box-h">Configured Sources <span class="msg" id="pSourcesSide" style="margin-left:auto"></span></div>
-                <div class="box-b"><div class="list" id="sourcesList" style="max-height:280px"></div></div>
+                <div class="box-h">Saved Connections <span class="msg" id="pSourcesSide" style="margin-left:auto"></span></div>
+                <div class="box-b">
+                    <div class="field-hint" style="margin-top:0;margin-bottom:8px">All configured OPC DA server connections. Click <b>Select</b> to load one for editing.</div>
+                    <div class="list" id="sourcesList" style="max-height:280px"></div>
+                </div>
             </div>
         </div>
     </div>

@@ -5,7 +5,7 @@ internal static class HelpContent
     public const string Markdown = """
 # Basic Workflow
 
-- Use **Connection** to configure the OPC DA source, host, credentials, and polling rates.
+- Use **Connection** to configure server connections (OPC DA address, credentials, default poll rate).
 - Use **Tags** to browse DA items, create DA → OPC UA mappings, and set per-tag poll rates.
 - Use **Monitor** to confirm source reads, live values, rate-group alarms, and OPC UA writes.
 - Use **Logs** to review warnings and errors from the bridge and UA server.
@@ -72,7 +72,7 @@ internal static class HelpContent
   │                      Web Dashboard (port 8080)                       │
   │                                                                      │
   │  Monitor ──► stats, source status, alarm bar, live values table      │
-  │  Connection ──► source config, server browser, default rate          │
+  │  Connection ──► server connection config, server discovery, default rate  │
   │  Tags ──► DA browser, mappings, faceplate (per-tag rate/mode)        │
   │  Logs ──► recent warnings and errors                                 │
   │  Help ──► this page                                                  │
@@ -245,7 +245,7 @@ The bridge can discover OPC DA servers installed on the **local machine** or on 
          ✅ Matrikon.OPC.Simulation.1    (from HKLM — machine-wide)
          ✅ CustomOPC.Server.1            (from HKCU — opcuser's profile)
 
- Step 4: Select server → Save Source
+ Step 4: Select server → Save Connection
          → same credentials used for COM connection (LogonUser + CreateInstance)
          → COM resolves ProgID from impersonated user's registry
          → server connects successfully
