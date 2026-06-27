@@ -202,11 +202,12 @@ public sealed class BridgeState
                     : source)
                 .ToArray();
 
+            bool anyConnected = updated.Any(s => string.Equals(s.ConnectionState, "Connected", StringComparison.OrdinalIgnoreCase));
             status_ = status_ with
             {
-                BridgeState = "Faulted",
+                BridgeState = anyConnected ? status_.BridgeState : "Faulted",
                 DaConnectionState = AggregateConnectionState(updated),
-                LastError = exception.Message,
+                LastError = anyConnected ? status_.LastError : exception.Message,
                 Sources = updated
             };
         }

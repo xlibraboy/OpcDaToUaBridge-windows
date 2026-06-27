@@ -371,11 +371,28 @@ public sealed class BridgeWorker : BackgroundService
                 await existing.Client.DisposeAsync().ConfigureAwait(false);
             }
 
-            bridge_state_.SetSourceConnectionState(source.SourceId, "Connecting");
-            IDaClient client = da_client_factory_.Create(settings, source);
-            await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
-            sessions[source.SourceId] = new SourceSession(source, client);
-            bridge_state_.SetSourceConnectionState(source.SourceId, "Connected");
+            if (string.IsNullOrWhiteSpace(source.ProgId))
+            {
+                bridge_state_.SetSourceConnectionState(source.SourceId, "Disconnected");
+                bridge_state_.SetSourceError(source.SourceId, new InvalidOperationException("ProgID is empty — enter a valid OPC DA server ProgID."));
+                logger_.LogWarning("Source {SourceId} has no ProgID, skipping connection", source.SourceId);
+                continue;
+            }
+
+            try
+            {
+                bridge_state_.SetSourceConnectionState(source.SourceId, "Connecting");
+                IDaClient client = da_client_factory_.Create(settings, source);
+                await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
+                sessions[source.SourceId] = new SourceSession(source, client);
+                bridge_state_.SetSourceConnectionState(source.SourceId, "Connected");
+            }
+            catch (Exception ex)
+            {
+                bridge_state_.SetSourceConnectionState(source.SourceId, "Faulted");
+                bridge_state_.SetSourceError(source.SourceId, ex);
+                logger_.LogWarning(ex, "Source {SourceId} connection failed", source.SourceId);
+            }
         }
     }
 
