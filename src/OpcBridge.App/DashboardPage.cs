@@ -254,9 +254,9 @@ internal static class DashboardPage
             <div class="stat"><div class="k">Cycle Budget</div><div class="mini-meter" aria-hidden="true"><div class="mini-meter-track"><div class="mini-meter-fill" id="pollUtilizationFill"></div></div></div><div class="s" id="pollUtilizationText">—</div><div class="s" id="pollSaturation">—</div></div>
         </div>
         <div class="mon-stat-group">
-            <div class="mon-stat-group-h">Resources</div>
-            <div class="stat"><div class="k">Handles</div><div class="v" id="resHandles">&#8212;</div></div>
-            <div class="stat"><div class="k">GDI / USER</div><div class="v" id="resGdiUser">&#8212;</div></div>
+            <div class="mon-stat-group-h">Resources <span class="info" data-tip="Native Windows process counters sampled every 5s. A steady or slowly growing count is normal; a steady upward trend signals a handle or COM object leak.">i</span></div>
+            <div class="stat"><div class="k">Handles <span class="info" data-tip="Total OS handles (files, registry keys, threads, events, COM objects) held by the process via GetProcessHandleCount. Typical idle: 300-800; investigate if it grows unbounded over time.">i</span></div><div class="v" id="resHandles">&#8212;</div></div>
+            <div class="stat"><div class="k">GDI / USER <span class="info" data-tip="GDI objects (pens, brushes, fonts, bitmaps) and USER objects (windows, menus, hooks) via GetGuiResources. Each has a per-process limit of 10,000; approaching it indicates a GDI/USER leak.">i</span></div><div class="v" id="resGdiUser">&#8212;</div></div>
         </div>
     </div>
     <div class="grid2" style="margin-bottom:14px">
