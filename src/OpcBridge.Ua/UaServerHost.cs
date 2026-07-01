@@ -57,6 +57,11 @@ public sealed class UaServerHost : IAsyncDisposable
     {
         server_?.SyncMappings(mappings);
     }
+    public void SetWriteHandler(Action<BridgeValue, TaskCompletionSource<bool>> handler)
+    {
+        server_?.SetWriteHandler(handler);
+    }
+
 
     public UaServerStatus GetStatus()
     {

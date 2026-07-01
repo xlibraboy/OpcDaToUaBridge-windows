@@ -9,7 +9,9 @@ public sealed record MappingTagDto(
     bool? Enabled = null,
     string? Mode = null,
     string? ManualValue = null,
-    int? PollRateMs = null);
+    int? PollRateMs = null,
+    float? DeadbandPct = null,
+    bool? Writeable = null);
 
 public sealed record MappingAddRequest(List<MappingTagDto>? Tags);
 

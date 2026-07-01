@@ -21,6 +21,8 @@ public sealed class BridgeWorker : BackgroundService
     private readonly DaClientFactory da_client_factory_;
     private readonly ILogger<BridgeWorker> logger_;
     private readonly IReadOnlyDictionary<int, int> rate_limits_;
+    private int backoffMs_ = 1000;
+    private WriteQueue? write_queue_;
 
     public BridgeWorker(
         UaServerHost uaServer,
@@ -50,8 +52,20 @@ public sealed class BridgeWorker : BackgroundService
 
         try
         {
-            logger_.LogInformation("Starting bridge with {MappingCount} mappings across {SourceCount} sources", activeMappings.Count, settings.Sources.Count);
             await ua_server_.StartAsync(activeMappings, stoppingToken).ConfigureAwait(false);
+
+            write_queue_ = new WriteQueue();
+            ua_server_.SetWriteHandler((value, tcs) =>
+            {
+                if (write_queue_ is null)
+                {
+                    tcs.TrySetResult(false);
+                    return;
+                }
+
+                // Non-blocking enqueue; the per-source consumer resolves the TCS.
+                _ = write_queue_.EnqueueAsync(new WriteRequest(value.SourceId, value.DaItemId, value.Value, tcs), stoppingToken);
+            });
 
             long uaMappingVersion = mappingVersion;
             long connectedVersion = -1;
@@ -104,6 +118,8 @@ public sealed class BridgeWorker : BackgroundService
                             pollerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
                             StartPollers(settings, sessions, cacheHolder, failedSourceQueue, pollers, pollerCts.Token);
                         }
+                        // Successful coordinator tick: reset backoff.
+                        backoffMs_ = 1000;
 
                         await Task.Delay(CoordinatorTickMs, stoppingToken).ConfigureAwait(false);
                     }
@@ -119,9 +135,8 @@ public sealed class BridgeWorker : BackgroundService
                         pollerCts.Dispose();
                         await DisposeSessionsAsync(sessions).ConfigureAwait(false);
                         sessions.Clear();
-                        connectedVersion = -1;
-                        pollerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                        await Task.Delay(settings.UpdateRateMs, stoppingToken).ConfigureAwait(false);
+                        await Task.Delay(backoffMs_, stoppingToken).ConfigureAwait(false);
+                        backoffMs_ = Math.Min(backoffMs_ * 2, 5000);
                     }
                 }
             }
@@ -176,6 +191,22 @@ public sealed class BridgeWorker : BackgroundService
                     cacheHolder,
                     failedSourceQueue,
                     pollerToken));
+            }
+        }
+
+        // Start one write-queue consumer per connected source.
+        if (write_queue_ is not null)
+        {
+            for (int i = 0; i < settings.Sources.Count; i++)
+            {
+                DaSourceRuntimeSettings source = settings.Sources[i];
+                if (!sessions.TryGetValue(source.SourceId, out SourceSession? session))
+                {
+                    continue;
+                }
+
+                string writerKey = $"{source.SourceId}:write";
+                pollers[writerKey] = Task.Run(() => ProcessWriteQueueAsync(source.SourceId, session, write_queue_, pollerToken));
             }
         }
     }
@@ -238,6 +269,33 @@ public sealed class BridgeWorker : BackgroundService
             }
         }
     }
+    private async Task ProcessWriteQueueAsync(
+        string sourceId,
+        SourceSession session,
+        WriteQueue writeQueue,
+        CancellationToken cancellationToken)
+    {
+        await foreach (WriteRequest req in writeQueue.ReaderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (!string.Equals(req.SourceId, sourceId, StringComparison.OrdinalIgnoreCase))
+            {
+                // Not for this source; re-enqueue so the correct consumer can pick it up.
+                await writeQueue.EnqueueAsync(req, cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+
+            try
+            {
+                bool success = await session.Client.WriteAsync(req.DaItemId, req.Value, cancellationToken).ConfigureAwait(false);
+                req.Tcs.TrySetResult(success);
+            }
+            catch (Exception ex)
+            {
+                req.Tcs.TrySetException(ex);
+            }
+        }
+    }
+
 
     private static async Task StopPollersAsync(Dictionary<string, Task> pollers, CancellationTokenSource? pollerCts)
     {
@@ -384,6 +442,12 @@ public sealed class BridgeWorker : BackgroundService
                 bridge_state_.SetSourceConnectionState(source.SourceId, "Connecting");
                 IDaClient client = da_client_factory_.Create(settings, source);
                 await client.ConnectAsync(cancellationToken).ConfigureAwait(false);
+
+                if (client is OpcDaClient opcDa)
+                {
+                    opcDa.OnCallbackValues += values => OnSubscriptionValues(values);
+                }
+
                 sessions[source.SourceId] = new SourceSession(source, client);
                 bridge_state_.SetSourceConnectionState(source.SourceId, "Connected");
             }
@@ -395,6 +459,17 @@ public sealed class BridgeWorker : BackgroundService
             }
         }
     }
+    private void OnSubscriptionValues(IReadOnlyList<BridgeValue> values)
+    {
+        bridge_state_.UpdateDaRead(values.Count > 0 ? values[0].SourceId : string.Empty, values, TimeSpan.Zero);
+        for (int i = 0; i < values.Count; i++)
+        {
+            BridgeValue value = values[i];
+            bridge_state_.SetValue(value);
+            ua_server_.UpdateValue(value);
+        }
+    }
+
 
     private static async Task DisposeSessionsAsync(Dictionary<string, SourceSession> sessions)
     {

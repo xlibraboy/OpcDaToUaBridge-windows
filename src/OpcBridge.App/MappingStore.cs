@@ -178,7 +178,9 @@ public sealed class MappingStore
             Enabled = tag.Enabled,
             Mode = NormalizeMode(tag.Mode),
             ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue.Trim(),
-            PollRateMs = Math.Max(0, tag.PollRateMs)
+            PollRateMs = Math.Max(0, tag.PollRateMs),
+            DeadbandPct = Math.Clamp(tag.DeadbandPct, 0f, 100f),
+            Writeable = tag.Writeable
         };
     }
 

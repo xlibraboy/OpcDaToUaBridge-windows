@@ -1,14 +1,24 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Options;
 using OpcBridge.Core;
 
 namespace OpcBridge.App;
 
 public sealed class BridgeState
 {
-    private readonly ConcurrentDictionary<string, BridgeValueSnapshot> values_by_key_ = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, BridgeValueSnapshot> values_by_key_;
     private readonly Dictionary<string, RateGroupStatus> rate_groups_ = new(StringComparer.OrdinalIgnoreCase);
     private BridgeRuntimeStatus status_ = BridgeRuntimeStatus.Empty;
     private readonly object status_lock_ = new();
+
+    public BridgeState(IOptions<BridgeOptions> options)
+    {
+        int expectedTagCount = options?.Value.ExpectedTagCount ?? 1000;
+        int capacity = Math.Max(64, expectedTagCount);
+        int concurrencyLevel = Math.Max(1, Environment.ProcessorCount * 2);
+        values_by_key_ = new ConcurrentDictionary<string, BridgeValueSnapshot>(
+            concurrencyLevel, capacity, StringComparer.OrdinalIgnoreCase);
+    }
 
     public void Configure(int updateRateMs, int mappingCount, IReadOnlyList<DaSourceRuntimeSettings> sources)
     {
@@ -295,6 +305,14 @@ public sealed class BridgeState
             status_ = status_ with { RateGroups = Array.Empty<RateGroupStatus>() };
         }
     }
+    public void UpdateResources(ResourceSnapshot resources)
+    {
+        lock (status_lock_)
+        {
+            status_ = status_ with { Resources = resources };
+        }
+    }
+
 
     public IReadOnlyList<BridgeValueSnapshot> GetValues()
     {
@@ -382,7 +400,8 @@ public sealed record BridgeRuntimeStatus(
     double LastPollValueRate,
     string? LastError,
     IReadOnlyList<DaSourceStatusSnapshot> Sources,
-    IReadOnlyList<RateGroupStatus> RateGroups)
+    IReadOnlyList<RateGroupStatus> RateGroups,
+    ResourceSnapshot? Resources)
 {
     public static BridgeRuntimeStatus Empty { get; } = new(
         "Stopped",
@@ -397,7 +416,8 @@ public sealed record BridgeRuntimeStatus(
         0,
         null,
         Array.Empty<DaSourceStatusSnapshot>(),
-        Array.Empty<RateGroupStatus>());
+        Array.Empty<RateGroupStatus>(),
+        null);
 }
 
 public sealed record RateGroupStatus(

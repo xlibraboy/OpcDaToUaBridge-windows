@@ -13,10 +13,17 @@ public sealed class OpcDaClient : IDaClient
     private static readonly int ItemValueOffset = (int)Marshal.OffsetOf<OpcItemState>(nameof(OpcItemState.Value));
 
     private readonly DaClientOptions options_;
-    private readonly object com_lock_ = new();
+    private OpcComThread? com_thread_;
     private object? server_com_object_;
     private IOPCServer? server_;
     private readonly Dictionary<int, RateGroup> rate_groups_ = new();
+    private bool subscriptions_active_;
+
+    /// <summary>
+    /// Raised when a DA subscription delivers values via IOPCDataCallback.
+    /// Subscribed to once per session by BridgeWorker.
+    /// </summary>
+    public event Action<IReadOnlyList<BridgeValue>>? OnCallbackValues;
 
     public OpcDaClient(DaClientOptions options)
     {
@@ -45,9 +52,28 @@ public sealed class OpcDaClient : IDaClient
 
         string? host = NormalizeHost(options_.Host);
 
+        // Pin all COM work for this source to a dedicated STA thread.
+        com_thread_ = new OpcComThread($"OpcDa-{options_.SourceId}");
+        com_thread_.Start();
+
         // Use impersonation for remote connections with explicit credentials
         bool hasCredentials = host is not null
             && !string.IsNullOrWhiteSpace(options_.RemoteUsername);
+
+        if (OperatingSystem.IsWindows())
+        {
+            com_thread_.EnqueueAndWait(() => ConnectOnStaThread(progId, host, hasCredentials));
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private void ConnectOnStaThread(string progId, string? host, bool hasCredentials)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
 
         if (hasCredentials)
         {
@@ -58,7 +84,6 @@ public sealed class OpcDaClient : IDaClient
             ConnectDirect(progId, host);
         }
 
-        return Task.CompletedTask;
     }
 
     [SupportedOSPlatform("windows")]
@@ -94,24 +119,75 @@ public sealed class OpcDaClient : IDaClient
     [SupportedOSPlatform("windows")]
     private void ConnectDirect(string progId, string? host)
     {
-        Type? serverType = host is null
-            ? Type.GetTypeFromProgID(progId, throwOnError: false)
-            : Type.GetTypeFromProgID(progId, host, throwOnError: false);
-
-        if (serverType is null)
+        if (host is null)
         {
-            throw new InvalidOperationException(host is null
-                ? $"OPC DA server ProgID '{progId}' is not registered on this machine."
-                : $"OPC DA server ProgID '{progId}' is not available on host '{host}'.");
+            // Local COM activation: no COSERVERINFO needed.
+            Type? serverType = Type.GetTypeFromProgID(progId, throwOnError: false);
+            if (serverType is null)
+            {
+                throw new InvalidOperationException($"OPC DA server ProgID '{progId}' is not registered on this machine.");
+            }
+
+            object serverObject = Activator.CreateInstance(serverType)
+                ?? throw new InvalidOperationException($"Failed to create OPC DA server '{progId}'.");
+            IOPCServer server = serverObject as IOPCServer
+                ?? throw new InvalidOperationException($"COM server '{progId}' does not expose IOPCServer.");
+
+            server_com_object_ = serverObject;
+            server_ = server;
+            return;
         }
 
-        object serverObject = Activator.CreateInstance(serverType)
-            ?? throw new InvalidOperationException($"Failed to create OPC DA server '{progId}'.");
-        IOPCServer server = serverObject as IOPCServer
-            ?? throw new InvalidOperationException($"COM server '{progId}' does not expose IOPCServer.");
+        // Remote DCOM activation via native CoCreateInstanceEx with explicit COAUTHINFO.
+        int clsidHr = CLSIDFromProgID(progId, out Guid clsid);
+        if (clsidHr < 0)
+        {
+            throw new InvalidOperationException($"OPC DA server ProgID '{progId}' is not registered (CLSIDFromProgID failed 0x{clsidHr:X8}).");
+        }
 
-        server_com_object_ = serverObject;
-        server_ = server;
+        // Auth is established by ConnectWithImpersonation's LogonUser + RunImpersonated
+        // wrapper, so COSERVERINFO.pAuthInfo = IntPtr.Zero (use the thread's impersonation token).
+        COSERVERINFO serverInfo = new()
+        {
+            pwszName = host,
+            pAuthInfo = IntPtr.Zero
+        };
+
+        Guid iid = typeof(IOPCServer).GUID;
+        MULTI_QI[] results = new MULTI_QI[1];
+        results[0].pIID = iid;
+        results[0].pItf = IntPtr.Zero;
+        results[0].hr = 0;
+
+        int hr = CoCreateInstanceEx(
+            ref clsid,
+            IntPtr.Zero,
+            CLSCTX_REMOTE_SERVER,
+            ref serverInfo,
+            1,
+            results);
+
+        if (hr < 0)
+        {
+            string hint = hr == E_ACCESSDENIED
+                ? " — access denied. Verify DCOM permissions, credentials, and authentication level on the remote host."
+                : string.Empty;
+            throw new InvalidOperationException(
+                $"CoCreateInstanceEx for '{progId}' on host '{host}' failed (0x{hr:X8}).{hint}");
+        }
+
+        if (results[0].hr < 0)
+        {
+            throw new InvalidOperationException(
+                $"Remote activation of '{progId}' on host '{host}' failed (QueryInterface 0x{results[0].hr:X8}).");
+        }
+
+        object serverObj = Marshal.GetObjectForIUnknown(results[0].pItf);
+        IOPCServer remoteServer = serverObj as IOPCServer
+            ?? throw new InvalidOperationException($"Remote COM server '{progId}' does not expose IOPCServer.");
+
+        server_com_object_ = serverObj;
+        server_ = remoteServer;
     }
 
     public Task<IReadOnlyList<BridgeValue>> ReadAsync(
@@ -142,38 +218,147 @@ public sealed class OpcDaClient : IDaClient
             list.Add(mapping);
         }
 
-        List<BridgeValue> allValues = new(mappings.Count);
-        lock (com_lock_)
+        if (!OperatingSystem.IsWindows())
         {
-            foreach ((int rate, List<TagMapping> rateMappings) in byRate)
-            {
-                if (!rate_groups_.TryGetValue(rate, out RateGroup? group))
-                {
-                    if (OperatingSystem.IsWindows())
-                    {
-                        group = CreateRateGroup(rate);
-                    }
-                    else
-                    {
-                        throw new PlatformNotSupportedException("OPC DA requires Windows.");
-                    }
-                    rate_groups_[rate] = group;
-                }
+            throw new PlatformNotSupportedException("OPC DA requires Windows.");
+        }
 
-                EnsureGroupItemsConfigured(group, rateMappings);
-                IReadOnlyList<BridgeValue> groupValues = ReadGroup(group);
-                allValues.AddRange(groupValues);
+        IReadOnlyList<BridgeValue> allValues = com_thread_!.EnqueueAndWait(() => ReadOnStaThread(byRate, mappings.Count));
+
+        return Task.FromResult(allValues);
+    }
+    public Task<bool> WriteAsync(string daItemId, object? value, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (string.IsNullOrWhiteSpace(daItemId) || value is null)
+        {
+            return Task.FromResult(false);
+        }
+
+        EnsureConnected();
+
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new PlatformNotSupportedException("OPC DA requires Windows.");
+        }
+
+        bool success = com_thread_!.EnqueueAndWait(() => WriteOnStaThread(daItemId, value));
+        return Task.FromResult(success);
+    }
+
+    private bool WriteOnStaThread(string daItemId, object value)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new PlatformNotSupportedException("OPC DA requires Windows.");
+        }
+
+        // Locate the server handle for this item across all rate groups.
+        int serverHandle = 0;
+        IOPCSyncIO? syncIo = null;
+        foreach (RateGroup group in rate_groups_.Values)
+        {
+            for (int i = 0; i < group.Bindings.Length; i++)
+            {
+                if (string.Equals(group.Bindings[i].DaItemId, daItemId, StringComparison.OrdinalIgnoreCase))
+                {
+                    serverHandle = group.Bindings[i].ServerHandle;
+                    syncIo = group.SyncIo;
+                    break;
+                }
+            }
+
+            if (serverHandle != 0)
+            {
+                break;
             }
         }
 
-        return Task.FromResult<IReadOnlyList<BridgeValue>>(allValues);
+        if (serverHandle == 0 || syncIo is null)
+        {
+            return false;
+        }
+
+        IntPtr handlesPtr = Marshal.AllocHGlobal(Marshal.SizeOf<int>());
+        IntPtr valuesPtr = Marshal.AllocHGlobal(16); // VARIANT is 16 bytes
+        IntPtr errorsPtr = IntPtr.Zero;
+
+        try
+        {
+            Marshal.WriteInt32(handlesPtr, serverHandle);
+            Marshal.GetNativeVariantForObject(value, valuesPtr);
+
+            int hr = syncIo.Write(1, handlesPtr, valuesPtr, out errorsPtr);
+            if (hr < 0)
+            {
+                return false;
+            }
+
+            int[] errors = new int[1];
+            Marshal.Copy(errorsPtr, errors, 0, 1);
+            return errors[0] >= 0;
+        }
+        finally
+        {
+            VariantClear(valuesPtr);
+            if (errorsPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(errorsPtr);
+            Marshal.FreeHGlobal(valuesPtr);
+            Marshal.FreeHGlobal(handlesPtr);
+        }
+    }
+
+
+    private IReadOnlyList<BridgeValue> ReadOnStaThread(Dictionary<int, List<TagMapping>> byRate, int mappingCount)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new PlatformNotSupportedException("OPC DA requires Windows.");
+        }
+
+        List<BridgeValue> values = new(mappingCount);
+        foreach ((int rate, List<TagMapping> rateMappings) in byRate)
+        {
+            if (!rate_groups_.TryGetValue(rate, out RateGroup? group))
+            {
+                float deadband = ComputeGroupDeadband(rateMappings);
+                group = CreateRateGroup(rate, deadband);
+                rate_groups_[rate] = group;
+            }
+
+            EnsureGroupItemsConfigured(group, rateMappings);
+
+            // Establish a subscription so values arrive via IOPCDataCallback instead of polling.
+            // If the server doesn't support it, fall back silently to device reads below.
+            if (options_.UseSubscriptions && group.ConnectionPoint is null && group.Sink is null)
+            {
+                TrySetupSubscription(group, rateMappings);
+            }
+
+            // When a subscription is active, values flow via OnCallbackValues; only device-read
+            // when subscriptions are off or never established.
+            if (!subscriptions_active_ || group.ConnectionPoint is null)
+            {
+                IReadOnlyList<BridgeValue> groupValues = ReadGroup(group);
+                values.AddRange(groupValues);
+            }
+        }
+
+        return values;
     }
 
     [SupportedOSPlatform("windows")]
-    private RateGroup CreateRateGroup(int rate)
+    private RateGroup CreateRateGroup(int rate, float deadbandPct)
     {
         IOPCServer server = server_!;
         Guid itemManagementGuid = typeof(IOPCItemMgt).GUID;
+
+        IntPtr deadbandPtr = IntPtr.Zero;
+        if (deadbandPct > 0f)
+        {
+            deadbandPtr = Marshal.AllocHGlobal(4);
+            Marshal.WriteInt32(deadbandPtr, BitConverter.SingleToInt32Bits(deadbandPct));
+        }
 
         int addGroupHresult = server.AddGroup(
             $"OpcBridge_{rate}",
@@ -181,7 +366,7 @@ public sealed class OpcDaClient : IDaClient
             Math.Max(100, rate),
             rate,
             IntPtr.Zero,
-            IntPtr.Zero,
+            deadbandPtr,
             0,
             out int serverGroupHandle,
             out _,
@@ -201,9 +386,98 @@ public sealed class OpcDaClient : IDaClient
             ItemManagement = itemManagement,
             SyncIo = syncIo,
             ServerGroupHandle = serverGroupHandle,
-            Bindings = []
+            Bindings = [],
+            DeadbandPtr = deadbandPtr
         };
     }
+    private static float ComputeGroupDeadband(IReadOnlyList<TagMapping> mappings)
+    {
+        float max = 0f;
+        for (int i = 0; i < mappings.Count; i++)
+        {
+            float d = mappings[i].DeadbandPct;
+            if (d > max) max = d;
+        }
+        return max > 100f ? 100f : max;
+    }
+
+    private void TrySetupSubscription(RateGroup group, IReadOnlyList<TagMapping> mappings)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        try
+        {
+            if (group.ComObject is not IConnectionPointContainer cpc)
+            {
+                subscriptions_active_ = false;
+                return;
+            }
+
+            Guid callbackIid = typeof(IOPCDataCallback).GUID;
+            int hr = cpc.FindConnectionPoint(ref callbackIid, out IConnectionPoint cp);
+            if (hr < 0)
+            {
+                subscriptions_active_ = false;
+                return;
+            }
+
+            // Build client-handle → item-id map for the callback to unpack notifications.
+            Dictionary<int, string> handleMap = new(group.Bindings.Length);
+            for (int i = 0; i < group.Bindings.Length; i++)
+            {
+                handleMap[i + 1] = group.Bindings[i].DaItemId;
+            }
+
+            Action<IReadOnlyList<BridgeValue>> handler = OnCallbackValues ?? (_ => { });
+            OpcDaCallbackSink sink = new(options_.SourceId, handleMap, handler);
+            hr = cp.Advise(sink, out int cookie);
+            if (hr < 0)
+            {
+                subscriptions_active_ = false;
+                return;
+            }
+
+            group.Sink = sink;
+            group.ConnectionPoint = cp;
+            group.CallbackCookie = cookie;
+            subscriptions_active_ = true;
+        }
+        catch (Exception)
+        {
+            subscriptions_active_ = false;
+        }
+    }
+
+    private static void UnadviseCallback(RateGroup group)
+    {
+        if (!OperatingSystem.IsWindows() || group.ConnectionPoint is null)
+        {
+            return;
+        }
+
+        try
+        {
+            group.ConnectionPoint.Unadvise(group.CallbackCookie);
+        }
+        catch
+        {
+            // Best-effort during teardown.
+        }
+
+        if (group.Sink is not null)
+        {
+            try { Marshal.ReleaseComObject(group.Sink); } catch { }
+            group.Sink = null;
+        }
+
+        try { Marshal.ReleaseComObject(group.ConnectionPoint); } catch { }
+        group.ConnectionPoint = null;
+        group.CallbackCookie = 0;
+    }
+
 
     private static void EnsureGroupItemsConfigured(RateGroup group, IReadOnlyList<TagMapping> mappings)
     {
@@ -375,44 +649,76 @@ public sealed class OpcDaClient : IDaClient
 
     public ValueTask DisposeAsync()
     {
-        try
+        // Unadvise callbacks and release all COM objects on the STA thread that owns them,
+        // then stop the thread. If the client never connected (no thread), nothing to do.
+        OpcComThread? thread = com_thread_;
+        com_thread_ = null;
+
+        if (thread is not null)
         {
-            lock (com_lock_)
+            try
             {
-                foreach (RateGroup group in rate_groups_.Values)
+                if (OperatingSystem.IsWindows())
                 {
-                    RemoveGroupItems(group);
-
-                    if (server_ is not null && group.ServerGroupHandle != 0)
-                    {
-                        server_.RemoveGroup(group.ServerGroupHandle, 0);
-                    }
+                    thread.EnqueueAndWait(DisposeGroupsOnStaThread);
                 }
-
-                rate_groups_.Clear();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Thread already torn down.
+            }
+            finally
+            {
+                if (OperatingSystem.IsWindows())
+                {
+                    thread.Dispose();
+                }
             }
         }
-        finally
+        else
         {
             server_ = null;
-
-            if (OperatingSystem.IsWindows())
-            {
-                foreach (RateGroup group in rate_groups_.Values)
-                {
-                    ReleaseComObject(ref group.ComObject);
-                }
-
-                ReleaseComObject(ref server_com_object_);
-            }
-            else
-            {
-                server_com_object_ = null;
-            }
+            server_com_object_ = null;
         }
 
         return ValueTask.CompletedTask;
     }
+    private void DisposeGroupsOnStaThread()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        RateGroup[] groups = rate_groups_.Values.ToArray();
+        foreach (RateGroup group in groups)
+        {
+            UnadviseCallback(group);
+            RemoveGroupItems(group);
+
+            if (server_ is not null && group.ServerGroupHandle != 0)
+            {
+                server_.RemoveGroup(group.ServerGroupHandle, 0);
+            }
+
+            if (group.DeadbandPtr != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(group.DeadbandPtr);
+                group.DeadbandPtr = IntPtr.Zero;
+            }
+        }
+
+        rate_groups_.Clear();
+
+        foreach (RateGroup group in groups)
+        {
+            ReleaseComObject(ref group.ComObject);
+        }
+
+        ReleaseComObject(ref server_com_object_);
+        server_ = null;
+    }
+
 
     private void EnsureConnected()
     {
@@ -494,7 +800,7 @@ public sealed class OpcDaClient : IDaClient
         };
     }
 
-    private static DateTime FileTimeToUtc(FILETIME value)
+    internal static DateTime FileTimeToUtc(FILETIME value)
     {
         long fileTime = ((long)value.dwHighDateTime << 32) | (uint)value.dwLowDateTime;
         return fileTime <= 0 ? DateTime.UtcNow : DateTime.FromFileTimeUtc(fileTime);
@@ -529,6 +835,38 @@ public sealed class OpcDaClient : IDaClient
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(nint handle);
+    private const int CLSCTX_REMOTE_SERVER = 0x10;
+    private const int E_ACCESSDENIED = unchecked((int)0x80070005);
+
+    [DllImport("ole32.dll", CharSet = CharSet.Unicode)]
+    private static extern int CLSIDFromProgID(string progId, out Guid clsid);
+
+    [DllImport("ole32.dll")]
+    private static extern int CoCreateInstanceEx(
+        ref Guid clsid,
+        IntPtr pUnkOuter,
+        int dwClsContext,
+        ref COSERVERINFO pServerInfo,
+        uint dwCount,
+        [In, Out] MULTI_QI[] pResults);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct COSERVERINFO
+    {
+        public IntPtr dwReserved;
+        public string pwszName;
+        public IntPtr pAuthInfo; // pointer to COAUTHINFO
+    }
+
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MULTI_QI
+    {
+        public Guid pIID;
+        public IntPtr pItf;
+        public int hr;
+    }
+
 
     private sealed record ItemBinding(string DaItemId, int ServerHandle);
 
@@ -540,6 +878,10 @@ public sealed class OpcDaClient : IDaClient
         public IOPCSyncIO? SyncIo;
         public int ServerGroupHandle;
         public ItemBinding[] Bindings = [];
+        public IntPtr DeadbandPtr;
+        public IConnectionPoint? ConnectionPoint;
+        public int CallbackCookie;
+        public OpcDaCallbackSink? Sink;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -645,5 +987,75 @@ public sealed class OpcDaClient : IDaClient
         int Read(int dataSource, int count, [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] int[] serverHandles, out IntPtr itemValues, out IntPtr errors);
 
         int Write(int count, IntPtr serverHandles, IntPtr values, out IntPtr errors);
+    }
+
+    [ComImport]
+    [Guid("B196B284-BAB4-101A-B69C-00AA00341D07")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IConnectionPointContainer
+    {
+        int EnumConnectionPoints(out IntPtr ppEnum);
+
+        int FindConnectionPoint(ref Guid riid, out IConnectionPoint ppCP);
+    }
+
+    [ComImport]
+    [Guid("B196B286-BAB4-101A-B69C-00AA00341D07")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IConnectionPoint
+    {
+        int GetConnectionInterface(out Guid pIID);
+
+        int GetConnectionPointContainer(out IConnectionPointContainer ppCPC);
+
+        int Advise([MarshalAs(UnmanagedType.IUnknown)] object pUnkSink, out int pdwCookie);
+
+        int Unadvise(int dwCookie);
+
+        int EnumConnections(out IntPtr ppEnum);
+    }
+
+    [ComImport]
+    [Guid("39C13A71-011E-11D0-9675-0020AFD8ADB3")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IOPCDataCallback
+    {
+        int OnDataChange(
+            int dwTransid,
+            int hGroup,
+            int hrMasterquality,
+            int hrQuality,
+            int dwCount,
+            IntPtr phClientItems,
+            IntPtr pvValues,
+            IntPtr pwQualities,
+            IntPtr pftTimeStamps,
+            IntPtr pErrors);
+
+        int OnReadComplete(
+            int dwTransid,
+            int hGroup,
+            int hrMasterquality,
+            int hrQuality,
+            int dwCount,
+            IntPtr phClientItems,
+            IntPtr pvValues,
+            IntPtr pwQualities,
+            IntPtr pftTimeStamps,
+            IntPtr pErrors);
+
+        int OnWriteComplete(
+            int dwTransid,
+            int hGroup,
+            int hrMasterquality,
+            int hrQuality,
+            int dwCount,
+            IntPtr phClientItems,
+            IntPtr pvValues,
+            IntPtr pwQualities,
+            IntPtr pftTimeStamps,
+            IntPtr pErrors);
+
+        int OnCancelComplete(int dwTransid, int hGroup);
     }
 }

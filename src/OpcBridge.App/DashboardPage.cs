@@ -159,6 +159,13 @@ internal static class DashboardPage
 
         .log-entry .message { white-space: pre-wrap; word-break: break-word; }
         .log-entry .exception { white-space: pre-wrap; word-break: break-word; margin-top: 6px; color: var(--bad); }
+        .log-entry .meta .lvl { font-weight: 600; }
+        .log-entry .meta .lvl.trace, .log-entry .meta .lvl.debug { color: var(--muted); }
+        .log-entry .meta .lvl.information { color: var(--accent); }
+        .log-entry .meta .lvl.warning { color: var(--warn); }
+        .log-entry .meta .lvl.error, .log-entry .meta .lvl.critical { color: var(--bad); }
+        .log-entry .message.error, .log-entry .message.critical { color: var(--bad); }
+        .log-entry .message.warning { color: var(--warn); }
         .help-accordion { display: flex; flex-direction: column; gap: 8px; }
         .help-section { background: var(--panel); border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
         .help-section > summary { padding: 10px 14px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 8px; user-select: none; list-style: none; }
@@ -245,6 +252,11 @@ internal static class DashboardPage
             <div class="mon-stat-group-h">Polling</div>
             <div class="stat"><div class="k">Default Rate</div><div class="v" id="updateRate">&#8212;</div><div class="s" id="mappingCount">0 tags</div></div>
             <div class="stat"><div class="k">Cycle Budget</div><div class="mini-meter" aria-hidden="true"><div class="mini-meter-track"><div class="mini-meter-fill" id="pollUtilizationFill"></div></div></div><div class="s" id="pollUtilizationText">—</div><div class="s" id="pollSaturation">—</div></div>
+        </div>
+        <div class="mon-stat-group">
+            <div class="mon-stat-group-h">Resources</div>
+            <div class="stat"><div class="k">Handles</div><div class="v" id="resHandles">&#8212;</div></div>
+            <div class="stat"><div class="k">GDI / USER</div><div class="v" id="resGdiUser">&#8212;</div></div>
         </div>
     </div>
     <div class="grid2" style="margin-bottom:14px">
@@ -380,6 +392,8 @@ internal static class DashboardPage
             <div class="field"><label class="fl" style="width:auto">Enabled</label><input type="checkbox" id="fpEnabled" data-action="toggle-tag-enabled"></div>
             <div class="field"><label class="fl" style="width:auto">Mode</label><select id="fpMode" data-action="tag-mode"><option value="Source">Source</option><option value="Manual">Manual</option></select></div>
             <div class="field"><label class="fl" style="width:auto">Poll Rate</label><select id="fpPollRate" data-action="tag-poll-rate"><option value="0">Source Default</option><option value="100">100 ms</option><option value="250">250 ms</option><option value="500">500 ms</option><option value="1000">1 s</option><option value="2000">2 s</option><option value="5000">5 s</option><option value="10000">10 s</option></select></div>
+            <div class="field"><label class="fl" style="width:auto">Deadband %</label><input type="number" id="fpDeadband" min="0" max="100" step="0.1" value="0" style="width:80px"></div>
+            <div class="field"><label class="fl" style="width:auto">Writeable</label><input type="checkbox" id="fpWriteable" data-action="tag-writeable"></div>
             <button class="btn ghost" type="button" id="fpApply" data-action="save-tag">Apply</button>
             <button class="btn ghost" type="button" id="fpRemove" data-action="remove-mapping">Remove</button>
         </div>
@@ -387,17 +401,27 @@ internal static class DashboardPage
 </div>
 <div class="view" id="view-logs">
     <div class="box">
-        <div class="box-h">Recent Logs</div>
+        <div class="box-h">Recent Logs <span class="msg" id="logMessage" style="margin-left:auto;font-weight:400;text-transform:none;letter-spacing:0">Showing recent in-app logs.</span></div>
         <div class="box-b log-panel">
             <div class="toolbar">
-                <button class="btn ghost" id="btnRefreshLogs" type="button">Refresh Logs</button>
+                <button class="btn ghost" id="btnRefreshLogs" type="button">Refresh</button>
                 <label class="fl" for="logLevel" style="width:auto">Minimum Level</label>
                 <select id="logLevel">
-                    <option value="Information">Information</option>
+                    <option value="Trace">Trace</option>
+                    <option value="Debug">Debug</option>
+                    <option value="Information" selected>Information</option>
                     <option value="Warning">Warning</option>
                     <option value="Error">Error</option>
+                    <option value="Critical">Critical</option>
                 </select>
-                <span class="msg" id="logMessage">Showing recent in-app logs.</span>
+                <label class="fl" for="logAutoRefresh" style="width:auto">Auto-refresh</label>
+                <input type="checkbox" id="logAutoRefresh" checked>
+                <label class="fl" for="logLimit" style="width:auto">Limit</label>
+                <select id="logLimit">
+                    <option value="50">50</option>
+                    <option value="200" selected>200</option>
+                    <option value="500">500 (max)</option>
+                </select>
             </div>
             <div class="log-view" id="logEntries"><span class="msg">Loading logs…</span></div>
         </div>
@@ -492,7 +516,11 @@ function renderMappingRow(mapping) {
     const modeBadge = mode === 'Manual' ? badge('Manual', 'warn') : (enabled ? badge('Source', 'good') : badge('Disabled', 'bad'));
     const pollRate = mapping.pollRateMs ?? mapping.PollRateMs ?? 0;
     const rateBadge = pollRate > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">${pollRate}ms</span>` : '';
-    return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}"><div style="flex:1"><div class="n">${esc(name)}</div><div class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</div></div><div class="li-badge">${rateBadge}${modeBadge}</div></div>`;
+    const deadband = Number(mapping.deadbandPct ?? mapping.DeadbandPct ?? 0);
+    const deadbandBadge = deadband > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">db ${deadband}%</span>` : '';
+    const writeable = (mapping.writeable ?? mapping.Writeable) === true;
+    const writeableBadge = writeable ? badge('RW', 'partial') : '';
+    return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}"><div style="flex:1"><div class="n">${esc(name)}</div><div class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</div></div><div class="li-badge">${deadbandBadge}${rateBadge}${writeableBadge}${modeBadge}</div></div>`;
 }
 
 function renderMappingRows(mappings) {
@@ -520,6 +548,10 @@ function openFaceplate(sourceId, itemId) {
     el('fpManualInput').disabled = mode !== 'Manual';
     const pollRate = mapping.pollRateMs ?? mapping.PollRateMs ?? 0;
     el('fpPollRate').value = String(pollRate);
+    const deadband = Number(mapping.deadbandPct ?? mapping.DeadbandPct ?? 0);
+    el('fpDeadband').value = String(deadband);
+    const writeable = (mapping.writeable ?? mapping.Writeable) === true;
+    el('fpWriteable').checked = writeable;
     el('fpModeHint').textContent = 'Mode ' + mode;
     el('fpApply').dataset.sourceId = sourceId;
     el('fpApply').dataset.itemId = itemId;
@@ -555,7 +587,7 @@ function showTab(name) {
     document.querySelectorAll('.tabbtn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
     document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
     if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
-    if (name === 'logs') loadLogs().catch(e => el('logMessage').textContent = '✗ ' + e.message);
+    if (name === 'logs') { state.logsLoaded = false; loadLogs(true).catch(e => el('logMessage').textContent = '✗ ' + e.message); }
     if (name === 'about') loadAppInfo().catch(e => el('aboutName').textContent = '✗ ' + e.message);
     if (name === 'help') loadHelp().catch(e => el('helpContent').innerHTML = '<span class="msg bad">✗ ' + esc(e.message) + '</span>');
 }
@@ -677,18 +709,20 @@ function formatPollUtilization(lastPollDurationMs, updateRateMs) {
 async function loadLogs(force = false) {
     if (state.logsLoaded && !force) return;
     const level = el('logLevel')?.value || 'Information';
+    const limit = parseInt(el('logLimit')?.value || '200', 10);
     el('logMessage').textContent = 'Loading logs…';
-    const payload = await (await fetch('/api/logs?limit=200&level=' + encodeURIComponent(level), { cache: 'no-store' })).json();
+    const payload = await (await fetch('/api/logs?limit=' + limit + '&level=' + encodeURIComponent(level), { cache: 'no-store' })).json();
     const entries = payload.entries || [];
     el('logEntries').innerHTML = entries.length ? entries.map(entry => {
         const timestamp = locTime(entry.timestampUtc || entry.TimestampUtc);
-        const levelText = entry.level || entry.Level || 'Information';
+        const levelText = (entry.level || entry.Level || 'Information');
+        const levelClass = levelText.toLowerCase();
         const category = entry.category || entry.Category || 'App';
         const message = entry.message || entry.Message || '';
         const exceptionText = entry.exceptionText || entry.ExceptionText || '';
-        return `<div class="log-entry"><div class="meta">${esc(timestamp)} · ${esc(levelText)} · ${esc(category)}</div><div class="message">${esc(message)}</div>${exceptionText ? `<div class="exception">${esc(exceptionText)}</div>` : ''}</div>`;
+        return `<div class="log-entry"><div class="meta">${esc(timestamp)} · <span class="lvl ${esc(levelClass)}">${esc(levelText)}</span> · ${esc(category)}</div><div class="message ${esc(levelClass)}">${esc(message)}</div>${exceptionText ? `<div class="exception">${esc(exceptionText)}</div>` : ''}</div>`;
     }).join('') : '<span class="msg">No log entries for this filter yet.</span>';
-    el('logMessage').textContent = entries.length + ' recent entries';
+    el('logMessage').textContent = entries.length + ' entr' + (entries.length !== 1 ? 'ies' : 'y') + ' (level ≥ ' + level + ')';
     state.logsLoaded = true;
 }
 
@@ -838,6 +872,16 @@ async function refresh() {
                 alarmBar.style.display = 'none';
             }
         }
+        const res = get(b, 'resources');
+        const resH = el('resHandles'); const resGU = el('resGdiUser');
+        if (resH && resGU) {
+            if (res && res.supported) {
+                resH.textContent = String(res.handleCount ?? '—');
+                resGU.textContent = (res.gdiObjects ?? '—') + ' / ' + (res.userObjects ?? '—');
+            } else {
+                resH.textContent = '—'; resGU.textContent = 'n/a (non-Windows)';
+            }
+        }
         state.lastValueCount = vs.length;
         updateLiveValuesUi();
         if (state.liveValuesEnabled) {
@@ -890,7 +934,9 @@ async function updateMapping(sourceId, itemId, mutate) {
         enabled: (mapping.enabled ?? mapping.Enabled) !== false,
         mode: mapping.mode || mapping.Mode || 'Source',
         manualValue: mapping.manualValue ?? mapping.ManualValue ?? null,
-        pollRateMs: mapping.pollRateMs ?? mapping.PollRateMs ?? 0
+        pollRateMs: mapping.pollRateMs ?? mapping.PollRateMs ?? 0,
+        deadbandPct: Number(mapping.deadbandPct ?? mapping.DeadbandPct ?? 0),
+        writeable: (mapping.writeable ?? mapping.Writeable) === true
     };
     mutate(payload);
     const r = await fetch('/api/mappings/update', {
@@ -1174,6 +1220,8 @@ function bindDynamicButtons() {
             updateMapping(sourceId, itemId, payload => {
                 payload.mode = el('fpMode').value || 'Source';
                 payload.pollRateMs = Number.parseInt(el('fpPollRate').value, 10) || 0;
+                payload.deadbandPct = Math.max(0, Math.min(100, Number.parseFloat(el('fpDeadband').value) || 0));
+                payload.writeable = el('fpWriteable').checked;
                 if (payload.mode === 'Manual') {
                     const manualField = el('fpManualInput');
                     if (!manualField.value.trim()) {
@@ -1228,6 +1276,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         state.logsLoaded = false;
         loadLogs(true).catch(e => el('logMessage').textContent = '✗ ' + e.message);
     });
+    el('logLimit').addEventListener('change', () => {
+        state.logsLoaded = false;
+        loadLogs(true).catch(e => el('logMessage').textContent = '✗ ' + e.message);
+    });
     bindDynamicButtons();
     const initTab = location.hash.slice(1);
     if (['monitor','connection','tags','logs','help','about'].includes(initTab)) showTab(initTab);
@@ -1235,11 +1287,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadMappings();
     updateLiveValuesUi();
     await refresh();
+    setInterval(refresh, 1000);
+    setInterval(() => { if (el('logAutoRefresh')?.checked && document.querySelector('#view-logs.active')) { state.logsLoaded = false; loadLogs(true).catch(() => {}); } }, 3000);
     if (initTab === 'logs') await loadLogs();
     if (initTab === 'help') await loadHelp();
     if (initTab === 'about') await loadAppInfo();
     fetch('/api/version').then(r => r.json()).then(p => { const v = (p.informationalVersion || p.version || '0.0.0').split('+')[0]; el('appVersion').textContent = 'v' + v; }).catch(() => {});
-    setInterval(refresh, 1000);
 });
 </script>
 </body>

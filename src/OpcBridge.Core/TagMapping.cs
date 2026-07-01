@@ -11,6 +11,8 @@ public sealed class TagMapping
     public string Mode { get; set; } = TagMode.Source;
     public string? ManualValue { get; set; }
     public int PollRateMs { get; set; }
+    public float DeadbandPct { get; set; }
+    public bool Writeable { get; set; }
 }
 
 public static class TagMode

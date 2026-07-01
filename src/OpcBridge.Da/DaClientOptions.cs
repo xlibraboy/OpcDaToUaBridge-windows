@@ -2,6 +2,7 @@ namespace OpcBridge.Da;
 
 public sealed class DaClientOptions
 {
+    public bool UseSubscriptions { get; set; } = true;
     public string SourceId { get; set; } = "default";
     public string DisplayName { get; set; } = string.Empty;
     public string ProgId { get; set; } = string.Empty;

@@ -9,6 +9,8 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
     private const string NamespaceUri = "urn:ohmypi:opc-da-to-ua-bridge:tags";
     private readonly IReadOnlyList<TagMapping> mappings_;
     private readonly Dictionary<string, BaseDataVariableState> variables_by_mapping_key_ = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<NodeId, (string SourceId, string DaItemId)> node_to_mapping_ = new();
+    private Action<BridgeValue, TaskCompletionSource<bool>>? write_handler_;
     private FolderState? root_folder_;
     private ushort namespace_index_;
     private DateTime? last_value_update_utc_;
@@ -46,6 +48,7 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
                 TagMapping mapping = mappings_[i];
                 BaseDataVariableState variable = CreateVariable(root, mapping);
                 variables_by_mapping_key_[GetMappingKey(mapping.SourceId, mapping.DaItemId)] = variable;
+                node_to_mapping_[variable.NodeId] = (mapping.SourceId, mapping.DaItemId);
                 AddPredefinedNode(SystemContext, variable);
             }
         }
@@ -63,6 +66,7 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
 
             BaseDataVariableState variable = CreateVariable(root_folder_, mapping);
             variables_by_mapping_key_[key] = variable;
+            node_to_mapping_[variable.NodeId] = (mapping.SourceId, mapping.DaItemId);
             AddPredefinedNode(SystemContext, variable);
         }
     }
@@ -123,6 +127,11 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
             last_value_update_utc_ = DateTime.UtcNow;
         }
     }
+    public void SetWriteHandler(Action<BridgeValue, TaskCompletionSource<bool>> handler)
+    {
+        write_handler_ = handler;
+    }
+
 
     private FolderState CreateFolder(NodeState? parent, string path, string name)
     {
@@ -146,6 +155,11 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
     private BaseDataVariableState CreateVariable(FolderState parent, TagMapping mapping)
     {
         NodeId dataType = ToDataTypeId(mapping.DataType);
+        byte accessLevel = mapping.Writeable
+            ? (byte)(AccessLevels.CurrentRead | AccessLevels.CurrentWrite)
+            : AccessLevels.CurrentRead;
+        AttributeWriteMask writeMask = AttributeWriteMask.None;
+
         BaseDataVariableState variable = new(parent)
         {
             SymbolicName = mapping.DisplayName,
@@ -155,12 +169,12 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
             BrowseName = new QualifiedName(mapping.DisplayName, namespace_index_),
             DisplayName = new LocalizedText(mapping.DisplayName),
             Description = new LocalizedText($"{mapping.SourceId}:{mapping.DaItemId}"),
-            WriteMask = AttributeWriteMask.None,
-            UserWriteMask = AttributeWriteMask.None,
+            WriteMask = writeMask,
+            UserWriteMask = writeMask,
             DataType = dataType,
             ValueRank = ValueRanks.Scalar,
-            AccessLevel = AccessLevels.CurrentRead,
-            UserAccessLevel = AccessLevels.CurrentRead,
+            AccessLevel = accessLevel,
+            UserAccessLevel = accessLevel,
             Historizing = false,
             Value = CreateInitialValue(mapping.DataType),
             StatusCode = StatusCodes.BadWaitingForInitialData,
@@ -168,8 +182,46 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
         };
 
         parent.AddChild(variable);
+
+        if (mapping.Writeable)
+        {
+            variable.OnWriteValue = HandleWriteValue;
+        }
+
         return variable;
     }
+    private ServiceResult HandleWriteValue(
+        ISystemContext context,
+        NodeState node,
+        NumericRange range,
+        QualifiedName componentName,
+        ref object value,
+        ref StatusCode statusCode,
+        ref DateTime timestamp)
+    {
+        if (write_handler_ is null || !node_to_mapping_.TryGetValue(node.NodeId, out (string SourceId, string DaItemId) mapping))
+        {
+            return StatusCodes.BadWriteNotSupported;
+        }
+
+        TaskCompletionSource<bool> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        BridgeValue bridgeValue = new(mapping.SourceId, mapping.DaItemId, value, DateTime.UtcNow, 192, true);
+        write_handler_(bridgeValue, tcs);
+
+        if (!tcs.Task.Wait(TimeSpan.FromSeconds(5)))
+        {
+            return StatusCodes.BadRequestTimeout;
+        }
+
+        bool success = tcs.Task.Result;
+        if (!success)
+        {
+            return StatusCodes.BadNoCommunication;
+        }
+
+        return ServiceResult.Good;
+    }
+
 
     private static string GetMappingKey(string sourceId, string daItemId)
     {

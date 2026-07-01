@@ -27,6 +27,7 @@ builder.Services.AddSingleton<BridgeState>();
 builder.Services.AddSingleton<MappingStore>();
 builder.Services.AddSingleton<UaServerHost>();
 builder.Services.AddHostedService<BridgeWorker>();
+builder.Services.AddHostedService<OpcBridgeMonitor>();
 
 WebApplication app = builder.Build();
 
@@ -260,7 +261,9 @@ app.MapPost("/api/mappings/add", (MappingAddRequest request, MappingStore store)
             Enabled = tag.Enabled ?? true,
             Mode = string.IsNullOrWhiteSpace(tag.Mode) ? TagMode.Source : tag.Mode,
             ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue,
-            PollRateMs = tag.PollRateMs ?? 0
+            PollRateMs = tag.PollRateMs ?? 0,
+            DeadbandPct = tag.DeadbandPct ?? 0f,
+            Writeable = tag.Writeable ?? false
         });
 
     long version = store.Add(tags);
@@ -283,7 +286,9 @@ app.MapPost("/api/mappings/update", (MappingUpdateRequest request, MappingStore 
         Enabled = request.Tag.Enabled ?? true,
         Mode = string.IsNullOrWhiteSpace(request.Tag.Mode) ? TagMode.Source : request.Tag.Mode,
         ManualValue = string.IsNullOrWhiteSpace(request.Tag.ManualValue) ? null : request.Tag.ManualValue,
-        PollRateMs = request.Tag.PollRateMs ?? 0
+        PollRateMs = request.Tag.PollRateMs ?? 0,
+        DeadbandPct = request.Tag.DeadbandPct ?? 0f,
+        Writeable = request.Tag.Writeable ?? false
     };
 
     if (!store.TryUpdate(tag, out long version))

@@ -9,4 +9,6 @@ public interface IDaClient : IAsyncDisposable
     Task<IReadOnlyList<BridgeValue>> ReadAsync(
         IReadOnlyList<TagMapping> mappings,
         CancellationToken cancellationToken);
+
+    Task<bool> WriteAsync(string daItemId, object? value, CancellationToken cancellationToken);
 }

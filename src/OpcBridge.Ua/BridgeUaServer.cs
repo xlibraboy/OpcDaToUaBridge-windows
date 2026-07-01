@@ -18,6 +18,11 @@ internal sealed class BridgeUaServer : StandardServer
     {
         node_manager_?.UpdateValue(value);
     }
+    public void SetWriteHandler(Action<BridgeValue, TaskCompletionSource<bool>> handler)
+    {
+        node_manager_?.SetWriteHandler(handler);
+    }
+
 
     public void SyncMappings(IReadOnlyList<TagMapping> mappings)
     {
