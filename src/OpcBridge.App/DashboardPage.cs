@@ -207,6 +207,12 @@ internal static class DashboardPage
         .info:hover { color: var(--accent); border-color: var(--accent); }
         .tip { position: fixed; z-index: 9999; background: var(--panel2); color: var(--text); border: 1px solid var(--border2); border-radius: 5px; padding: 7px 11px; font-size: 11px; font-weight: 400; line-height: 1.5; max-width: 280px; box-shadow: 0 6px 16px rgba(0,0,0,.4); pointer-events: none; opacity: 0; transition: opacity .1s ease; }
         .tip.show { opacity: 1; }
+        .subtabs { display: flex; gap: 0; margin-bottom: 14px; border-bottom: 1px solid var(--border2); }
+        .subtab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); padding: 8px 16px; font-size: 12px; font-weight: 600; cursor: pointer; }
+        .subtab:hover { color: var(--text); }
+        .subtab.active { color: var(--accent); border-bottom-color: var(--accent); }
+        .subpanel { display: none; }
+        .subpanel.active { display: block; }
     </style>
 </head>
 <body>
@@ -331,6 +337,12 @@ internal static class DashboardPage
 <div class="view" id="view-connection">
     <div class="conn-layout">
         <div class="conn-main">
+            <div class="subtabs">
+                <button class="subtab active" data-subtab="da-sources">DA Sources</button>
+                <button class="subtab" data-subtab="ua-settings">UA Settings</button>
+                <button class="subtab" data-subtab="security">Security & Backup</button>
+            </div>
+            <div class="subpanel active" id="subpanel-da-sources">
             <div class="box">
                 <div class="box-h">Server Connection <span class="msg" id="cfgMessage" style="margin-left:auto;font-weight:400;text-transform:none;letter-spacing:0">Select a saved connection or click New.</span></div>
                 <div class="box-b">
@@ -359,8 +371,25 @@ internal static class DashboardPage
                         <button class="btn ghost" id="cfgNew" type="button">New</button>
                         <button class="btn ghost" id="cfgRemove" type="button">Remove</button>
                     </div>
-                    <div class="conn-section">
-                        <div class="conn-section-h">Backup & Restore <span class="info" data-tip="Export saves all DA sources + tag mappings to a JSON file. Import restores them. Passwords are NOT exported — re-enter after import.">i</span></div>
+                </div>
+            </div>
+            <div class="subpanel" id="subpanel-ua-settings">
+                <div class="box">
+                    <div class="box-h">UA Server Settings <span class="info" data-tip="OPC UA server endpoint and security. Changes are saved to ua-settings.json and applied on restart.">i</span></div>
+                    <div class="box-b">
+                        <div class="field"><label class="fl">Endpoint</label><input id="uaEndpointInput" type="text" placeholder="opc.tcp://0.0.0.0:4840/OpcDaToUaBridge" style="flex:1"></div>
+                        <div class="field"><label class="fl" style="width:auto">Auto-accept certs</label><input type="checkbox" id="uaAutoAccept"></div>
+                        <div class="field"><label class="fl" style="width:auto">Require auth</label><input type="checkbox" id="uaRequireAuth"></div>
+                        <div class="field"><label class="fl">Username</label><input id="uaUsername" type="text" placeholder="(username)" style="flex:1"></div>
+                        <div class="field"><label class="fl">Password</label><input id="uaPassword" type="password" placeholder="(leave blank to keep)" style="flex:1"></div>
+                        <div class="field" style="margin-bottom:0"><button class="btn" type="button" id="btnSaveUaSettings">Save UA Settings</button><span class="msg" id="uaSettingsMsg">Changes apply on restart.</span></div>
+                    </div>
+                </div>
+            </div>
+            <div class="subpanel" id="subpanel-security">
+                <div class="box">
+                    <div class="box-h">Backup & Restore <span class="info" data-tip="Export saves all DA sources + tag mappings to a JSON file. Import restores them. Passwords are NOT exported — re-enter after import.">i</span></div>
+                    <div class="box-b">
                         <div class="field">
                             <button class="btn" id="btnExportConfig" type="button">Export Config</button>
                             <button class="btn ghost" id="btnImportConfig" type="button">Import Config</button>
@@ -368,24 +397,16 @@ internal static class DashboardPage
                             <span class="msg" id="configBackupMsg">Backup includes sources + mappings. Passwords not included.</span>
                         </div>
                     </div>
-                    <div class="conn-section">
-                        <div class="conn-section-h">UA Client Certificates <span class="info" data-tip="When AutoAcceptUntrustedCertificates is false, new UA client certs are saved to 'rejected'. Approve them here to allow the client to connect. Trusted certs can be rejected or deleted.">i</span></div>
-                        <div class="box-b" style="padding:8px 0">
-                            <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px">Rejected (pending approval)</div>
-                            <div class="list" id="uaCertRejected" style="max-height:150px;margin-bottom:8px"><span class="msg">Loading…</span></div>
-                            <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px">Trusted (approved)</div>
-                            <div class="list" id="uaCertTrusted" style="max-height:150px"><span class="msg">Loading…</span></div>
-                            <div class="toolbar" style="margin-top:8px"><button class="btn ghost" type="button" id="btnRefreshCerts">Refresh</button><span class="msg" id="certMsg"></span></div>
-                        </div>
+                </div>
+                <div class="box" style="margin-top:14px">
+                    <div class="box-h">UA Client Certificates <span class="info" data-tip="When AutoAcceptUntrustedCertificates is false, new UA client certs are saved to 'rejected'. Approve them here to allow the client to connect.">i</span></div>
+                    <div class="box-b" style="padding:8px 0">
+                        <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px">Rejected (pending approval)</div>
+                        <div class="list" id="uaCertRejected" style="max-height:150px;margin-bottom:8px"><span class="msg">Loading…</span></div>
+                        <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px">Trusted (approved)</div>
+                        <div class="list" id="uaCertTrusted" style="max-height:150px"><span class="msg">Loading…</span></div>
+                        <div class="toolbar" style="margin-top:8px"><button class="btn ghost" type="button" id="btnRefreshCerts">Refresh</button><span class="msg" id="certMsg"></span></div>
                     </div>
-                    <div class="conn-section">
-                        <div class="conn-section-h">UA Settings <span class="info" data-tip="OPC UA server endpoint and security. Changes are saved to ua-settings.json and applied on restart.">i</span></div>
-                        <div class="field"><label class="fl">Endpoint</label><input id="uaEndpointInput" type="text" placeholder="opc.tcp://0.0.0.0:4840/OpcDaToUaBridge" style="flex:1"></div>
-                        <div class="field"><label class="fl" style="width:auto">Auto-accept certs</label><input type="checkbox" id="uaAutoAccept"></div>
-                        <div class="field"><label class="fl" style="width:auto">Require auth</label><input type="checkbox" id="uaRequireAuth"></div>
-                        <div class="field"><label class="fl">Username</label><input id="uaUsername" type="text" placeholder="(username)" style="flex:1"></div>
-                        <div class="field"><label class="fl">Password</label><input id="uaPassword" type="password" placeholder="(leave blank to keep)" style="flex:1"></div>
-                        <div class="field" style="margin-bottom:0"><button class="btn" type="button" id="btnSaveUaSettings">Save UA Settings</button><span class="msg" id="uaSettingsMsg">Changes apply on restart.</span></div>
                 </div>
             </div>
         </div>
@@ -667,6 +688,10 @@ function showTab(name) {
     else { diagnosticsActive = false; }
     if (name === 'about') loadAppInfo().catch(e => el('aboutName').textContent = '✗ ' + e.message);
     if (name === 'help') loadHelp().catch(e => el('helpContent').innerHTML = '<span class="msg bad">✗ ' + esc(e.message) + '</span>');
+}
+function showSubtab(name) {
+    document.querySelectorAll('.subtab').forEach(b => b.classList.toggle('active', b.dataset.subtab === name));
+    document.querySelectorAll('.subpanel').forEach(p => p.classList.toggle('active', p.id === 'subpanel-' + name));
 }
 function badge(t, c) { return `<span class="badge ${c}">${esc(t)}</span>`; }
 function stateClass(v) {
@@ -1624,6 +1649,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadUaCerts();
     el('btnSaveUaSettings').addEventListener('click', saveUaSettings);
     loadUaSettings();
+    document.querySelectorAll('.subtab').forEach(btn => {
+        btn.addEventListener('click', () => showSubtab(btn.dataset.subtab));
+    });
     el('btnReloadServers').addEventListener('click', () => browseServers().catch(e => el('msgServers').textContent = e.message));
     el('btnBrowseTags').addEventListener('click', () => browseTags('').catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
     el('btnBrowseAllTags').addEventListener('click', () => browseTags('', true).catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
