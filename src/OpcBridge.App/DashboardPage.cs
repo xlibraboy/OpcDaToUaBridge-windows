@@ -378,6 +378,7 @@ internal static class DashboardPage
                             <div class="toolbar" style="margin-top:8px"><button class="btn ghost" type="button" id="btnRefreshCerts">Refresh</button><span class="msg" id="certMsg"></span></div>
                         </div>
                     </div>
+                </div>
             </div>
         </div>
         <div class="conn-side">
