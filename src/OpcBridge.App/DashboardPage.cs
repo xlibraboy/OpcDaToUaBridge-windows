@@ -196,8 +196,7 @@ internal static class DashboardPage
         .kv .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
         .kv .v { word-break: break-word; }
         @media (max-width: 1100px) { .split { grid-template-columns: 1fr; } }
-        .conn-layout { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; align-items: start; }
-        @media (max-width: 1000px) { .conn-layout { grid-template-columns: 1fr; } }
+        .conn-layout { display: flex; flex-direction: column; gap: 14px; }
         .conn-side { display: flex; flex-direction: column; gap: 14px; }
         .conn-section { padding: 10px 0; border-top: 1px solid var(--border); }
         .conn-section:first-of-type { border-top: none; padding-top: 4px; }
@@ -373,6 +372,22 @@ internal static class DashboardPage
                     </div>
                 </div>
             </div>
+            <div class="box">
+                <div class="box-h">Discover Servers</div>
+                <div class="box-b">
+                    <div class="toolbar">
+                        <button class="btn ghost" id="btnReloadServers" type="button">Scan</button>
+                        <span class="msg" id="msgServers">Click Use to fill in ProgID + Host.</span>
+                    </div>
+                    <div class="list" id="listServers" style="max-height:200px"></div>
+                </div>
+            </div>
+            <div class="box">
+                <div class="box-h">Saved Connections <span class="msg" id="pSourcesSide" style="margin-left:auto"></span></div>
+                <div class="box-b">
+                    <div class="list" id="sourcesList" style="max-height:280px"></div>
+                </div>
+            </div>
             </div>
             <div class="subpanel" id="subpanel-ua-settings">
                 <div class="box">
@@ -400,7 +415,7 @@ internal static class DashboardPage
                     </div>
                 </div>
                 <div class="box" style="margin-top:14px">
-                    <div class="box-h">UA Client Certificates <span class="info" data-tip="When AutoAcceptUntrustedCertificates is false, new UA client certs are saved to 'rejected'. Approve them here to allow the client to connect.">i</span></div>
+                    <div class="box-h">UA Client Certificates <span class="info" data-tip="When AutoAcceptUntrustedCertificates is false, new UA client certs are saved to rejected. Approve them here.">i</span></div>
                     <div class="box-b" style="padding:8px 0">
                         <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px">Rejected (pending approval)</div>
                         <div class="list" id="uaCertRejected" style="max-height:150px;margin-bottom:8px"><span class="msg">Loading…</span></div>
@@ -408,24 +423,6 @@ internal static class DashboardPage
                         <div class="list" id="uaCertTrusted" style="max-height:150px"><span class="msg">Loading…</span></div>
                         <div class="toolbar" style="margin-top:8px"><button class="btn ghost" type="button" id="btnRefreshCerts">Refresh</button><span class="msg" id="certMsg"></span></div>
                     </div>
-                </div>
-            </div>
-        </div>
-        <div class="conn-side">
-            <div class="box">
-                <div class="box-h">Discover Servers</div>
-                <div class="box-b">
-                    <div class="toolbar">
-                        <button class="btn ghost" id="btnReloadServers" type="button">Scan</button>
-                        <span class="msg" id="msgServers">Click Use to fill in ProgID + Host.</span>
-                    </div>
-                    <div class="list" id="listServers" style="max-height:200px"></div>
-                </div>
-            </div>
-            <div class="box">
-                <div class="box-h">Saved Connections <span class="msg" id="pSourcesSide" style="margin-left:auto"></span></div>
-                <div class="box-b">
-                    <div class="list" id="sourcesList" style="max-height:280px"></div>
                 </div>
             </div>
         </div>
