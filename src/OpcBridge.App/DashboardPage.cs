@@ -373,6 +373,7 @@ internal static class DashboardPage
                     </div>
                 </div>
             </div>
+            </div>
             <div class="subpanel" id="subpanel-ua-settings">
                 <div class="box">
                     <div class="box-h">UA Server Settings <span class="info" data-tip="OPC UA server endpoint and security. Changes are saved to ua-settings.json and applied on restart.">i</span></div>
