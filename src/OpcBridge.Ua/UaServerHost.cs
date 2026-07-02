@@ -8,19 +8,52 @@ namespace OpcBridge.Ua;
 
 public sealed class UaServerHost : IAsyncDisposable
 {
-    private readonly UaServerOptions options_;
+    private UaServerOptions options_;
     private readonly ILogger<UaServerHost> logger_;
     private readonly ILoggerFactory logger_factory_;
     private BridgeUaServer? server_;
+    private readonly string settings_path_;
 
     public UaServerHost(
         IOptions<UaServerOptions> options,
         ILogger<UaServerHost> logger,
         ILoggerFactory loggerFactory)
     {
-        options_ = options.Value;
+        options_ = LoadSettings(options.Value);
+        settings_path_ = Path.Combine(AppContext.BaseDirectory, "ua-settings.json");
         logger_ = logger;
         logger_factory_ = loggerFactory;
+    }
+
+    public UaServerOptions GetOptions() => options_;
+
+    public void UpdateOptions(UaServerOptions updated)
+    {
+        options_ = updated;
+        PersistSettings();
+    }
+
+    private UaServerOptions LoadSettings(UaServerOptions defaults)
+    {
+        try
+        {
+            string path = Path.Combine(AppContext.BaseDirectory, "ua-settings.json");
+            if (!File.Exists(path)) return defaults;
+            string json = File.ReadAllText(path);
+            UaServerOptions? loaded = System.Text.Json.JsonSerializer.Deserialize<UaServerOptions>(json);
+            return loaded ?? defaults;
+        }
+        catch { return defaults; }
+    }
+
+    private void PersistSettings()
+    {
+        try
+        {
+            string json = System.Text.Json.JsonSerializer.Serialize(options_, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(settings_path_, json);
+        }
+        catch { }
     }
 
     public async Task StartAsync(IReadOnlyList<TagMapping> mappings, CancellationToken cancellationToken)

@@ -533,6 +533,49 @@ app.MapPost("/api/ua/certificates/delete", (HttpContext context) =>
     File.Delete(path);
     return Results.Json(new { status = "ok", message = $"Certificate '{fileName}' deleted from {folder}." });
 });
+
+app.MapGet("/api/ua/settings", (UaServerHost uaServer) =>
+{
+    UaServerOptions opts = uaServer.GetOptions();
+    return Results.Json(new
+    {
+        endpointUrl = opts.EndpointUrl,
+        autoAcceptUntrustedCertificates = opts.AutoAcceptUntrustedCertificates,
+        requireAuthentication = opts.RequireAuthentication,
+        username = opts.Username ?? string.Empty,
+        allowedIpAddresses = opts.AllowedIpAddresses ?? new List<string>()
+    });
+});
+
+app.MapPost("/api/ua/settings", async (HttpContext context, UaServerHost uaServer) =>
+{
+    try
+    {
+        using System.Text.Json.JsonDocument doc = await System.Text.Json.JsonDocument.ParseAsync(context.Request.Body);
+        System.Text.Json.JsonElement root = doc.RootElement;
+
+        UaServerOptions current = uaServer.GetOptions();
+        UaServerOptions updated = new()
+        {
+            ApplicationName = current.ApplicationName,
+            EndpointUrl = root.TryGetProperty("endpointUrl", out var ep) ? ep.GetString() ?? current.EndpointUrl : current.EndpointUrl,
+            AutoAcceptUntrustedCertificates = root.TryGetProperty("autoAcceptUntrustedCertificates", out var aa) ? aa.GetBoolean() : current.AutoAcceptUntrustedCertificates,
+            RequireAuthentication = root.TryGetProperty("requireAuthentication", out var ra) ? ra.GetBoolean() : current.RequireAuthentication,
+            Username = root.TryGetProperty("username", out var un) ? un.GetString() : current.Username,
+            Password = root.TryGetProperty("password", out var pw) && !string.IsNullOrEmpty(pw.GetString()) ? pw.GetString() : current.Password,
+            AllowedIpAddresses = root.TryGetProperty("allowedIpAddresses", out var ip) && ip.ValueKind == System.Text.Json.JsonValueKind.Array
+                ? ip.EnumerateArray().Select(x => x.GetString() ?? string.Empty).ToList()
+                : current.AllowedIpAddresses
+        };
+
+        uaServer.UpdateOptions(updated);
+        return Results.Json(new { status = "ok", message = "UA settings saved. Restart the bridge to apply (endpoint/auth changes take effect on restart)." });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
 await app.RunAsync().ConfigureAwait(false);

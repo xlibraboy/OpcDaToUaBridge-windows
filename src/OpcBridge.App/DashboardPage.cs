@@ -378,6 +378,14 @@ internal static class DashboardPage
                             <div class="toolbar" style="margin-top:8px"><button class="btn ghost" type="button" id="btnRefreshCerts">Refresh</button><span class="msg" id="certMsg"></span></div>
                         </div>
                     </div>
+                    <div class="conn-section">
+                        <div class="conn-section-h">UA Settings <span class="info" data-tip="OPC UA server endpoint and security. Changes are saved to ua-settings.json and applied on restart.">i</span></div>
+                        <div class="field"><label class="fl">Endpoint</label><input id="uaEndpointInput" type="text" placeholder="opc.tcp://0.0.0.0:4840/OpcDaToUaBridge" style="flex:1"></div>
+                        <div class="field"><label class="fl" style="width:auto">Auto-accept certs</label><input type="checkbox" id="uaAutoAccept"></div>
+                        <div class="field"><label class="fl" style="width:auto">Require auth</label><input type="checkbox" id="uaRequireAuth"></div>
+                        <div class="field"><label class="fl">Username</label><input id="uaUsername" type="text" placeholder="(username)" style="flex:1"></div>
+                        <div class="field"><label class="fl">Password</label><input id="uaPassword" type="password" placeholder="(leave blank to keep)" style="flex:1"></div>
+                        <div class="field" style="margin-bottom:0"><button class="btn" type="button" id="btnSaveUaSettings">Save UA Settings</button><span class="msg" id="uaSettingsMsg">Changes apply on restart.</span></div>
                 </div>
             </div>
         </div>
@@ -1516,6 +1524,44 @@ async function importConfig(event) {
     event.target.value = '';
 }
 
+async function loadUaSettings() {
+    try {
+        const p = await (await fetch('/api/ua/settings', { cache: 'no-store' })).json();
+        el('uaEndpointInput').value = p.endpointUrl || '';
+        el('uaAutoAccept').checked = p.autoAcceptUntrustedCertificates !== false;
+        el('uaRequireAuth').checked = p.requireAuthentication === true;
+        el('uaUsername').value = p.username || '';
+        el('uaPassword').value = '';
+    } catch (e) {
+        el('uaSettingsMsg').textContent = '✗ ' + e.message;
+    }
+}
+
+async function saveUaSettings() {
+    el('uaSettingsMsg').textContent = 'Saving…';
+    try {
+        const body = {
+            endpointUrl: el('uaEndpointInput').value.trim(),
+            autoAcceptUntrustedCertificates: el('uaAutoAccept').checked,
+            requireAuthentication: el('uaRequireAuth').checked,
+            username: el('uaUsername').value.trim(),
+            password: el('uaPassword').value || null
+        };
+        const r = await fetch('/api/ua/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const p = await r.json();
+        if (!r.ok) throw new Error(p.error || 'Save failed');
+        el('uaSettingsMsg').textContent = p.message || 'Saved.';
+        el('uaPassword').value = '';
+        await refresh();
+    } catch (e) {
+        el('uaSettingsMsg').textContent = '✗ ' + e.message;
+    }
+}
+
 async function loadUaCerts() {
     try {
         const p = await (await fetch('/api/ua/certificates', { cache: 'no-store' })).json();
@@ -1576,6 +1622,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     });
     loadUaCerts();
+    el('btnSaveUaSettings').addEventListener('click', saveUaSettings);
+    loadUaSettings();
     el('btnReloadServers').addEventListener('click', () => browseServers().catch(e => el('msgServers').textContent = e.message));
     el('btnBrowseTags').addEventListener('click', () => browseTags('').catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
     el('btnBrowseAllTags').addEventListener('click', () => browseTags('', true).catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
