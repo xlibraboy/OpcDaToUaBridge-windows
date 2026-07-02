@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
@@ -344,6 +345,96 @@ app.MapPost("/api/mappings/remove", (MappingRemoveRequest request, MappingStore 
 
     long version = store.Remove(request.SourceId, request.DaItemId);
     return Results.Json(new { version });
+});
+
+app.MapGet("/api/config/export", (DaRuntimeSettings daSettings, MappingStore mappingStore) =>
+{
+    DaRuntimeSettingsSnapshot daSnapshot = daSettings.GetSnapshot();
+    (IReadOnlyList<TagMapping> mappings, _) = mappingStore.GetSnapshot();
+
+    return Results.Json(new
+    {
+        exportedAtUtc = DateTime.UtcNow,
+        daSources = new
+        {
+            updateRateMs = daSnapshot.UpdateRateMs,
+            sources = daSnapshot.Sources.Select(s => new
+            {
+                sourceId = s.SourceId,
+                displayName = s.DisplayName,
+                progId = s.ProgId,
+                host = s.Host,
+                updateRateMs = s.UpdateRateMs,
+                remoteUsername = s.RemoteUsername,
+                remoteDomain = s.RemoteDomain
+            })
+        },
+        mappings = mappings
+    });
+});
+
+app.MapPost("/api/config/import", async (HttpContext context, DaRuntimeSettings daSettings, MappingStore mappingStore) =>
+{
+    try
+    {
+        using JsonDocument doc = await JsonDocument.ParseAsync(context.Request.Body);
+        JsonElement root = doc.RootElement;
+
+        // Restore DA sources
+        if (root.TryGetProperty("daSources", out JsonElement daSourcesEl))
+        {
+            int updateRate = daSourcesEl.TryGetProperty("updateRateMs", out JsonElement ur) ? ur.GetInt32() : 1000;
+            List<DaSourceRuntimeSettings> sources = new();
+
+            if (daSourcesEl.TryGetProperty("sources", out JsonElement sourcesEl) && sourcesEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement s in sourcesEl.EnumerateArray())
+                {
+                    sources.Add(new DaSourceRuntimeSettings(
+                        s.TryGetProperty("sourceId", out JsonElement sid) ? sid.GetString() ?? "default" : "default",
+                        s.TryGetProperty("displayName", out JsonElement dn) ? dn.GetString() ?? string.Empty : string.Empty,
+                        s.TryGetProperty("progId", out JsonElement pid) ? pid.GetString() ?? string.Empty : string.Empty,
+                        s.TryGetProperty("host", out JsonElement h) ? h.GetString() ?? "localhost" : "localhost",
+                        s.TryGetProperty("remoteUsername", out JsonElement ru) ? ru.GetString() : null,
+                        null, // password not exported — must be re-entered on import
+                        s.TryGetProperty("remoteDomain", out JsonElement rd) ? rd.GetString() : null,
+                        s.TryGetProperty("updateRateMs", out JsonElement sur) ? sur.GetInt32() : updateRate));
+                }
+            }
+
+            daSettings.RestoreFromSnapshot(new DaRuntimeSettingsSnapshot(updateRate, sources, 0));
+        }
+
+        // Restore mappings
+        if (root.TryGetProperty("mappings", out JsonElement mappingsEl) && mappingsEl.ValueKind == JsonValueKind.Array)
+        {
+            List<TagMapping> tags = new();
+            foreach (JsonElement m in mappingsEl.EnumerateArray())
+            {
+                tags.Add(new TagMapping
+                {
+                    SourceId = m.TryGetProperty("sourceId", out JsonElement sid) ? sid.GetString() ?? "default" : "default",
+                    DaItemId = m.TryGetProperty("daItemId", out JsonElement di) ? di.GetString() ?? string.Empty : string.Empty,
+                    DisplayName = m.TryGetProperty("displayName", out JsonElement dn) ? dn.GetString() ?? string.Empty : string.Empty,
+                    DataType = m.TryGetProperty("dataType", out JsonElement dt) ? dt.GetString() ?? "Auto" : "Auto",
+                    UaNodeId = m.TryGetProperty("uaNodeId", out JsonElement un) ? un.GetString() ?? string.Empty : string.Empty,
+                    Enabled = m.TryGetProperty("enabled", out JsonElement en) ? en.GetBoolean() : true,
+                    Mode = m.TryGetProperty("mode", out JsonElement mo) ? mo.GetString() ?? "Source" : "Source",
+                    ManualValue = m.TryGetProperty("manualValue", out JsonElement mv) ? mv.GetString() : null,
+                    PollRateMs = m.TryGetProperty("pollRateMs", out JsonElement pr) ? pr.GetInt32() : 0,
+                    DeadbandPct = m.TryGetProperty("deadbandPct", out JsonElement db) ? (float)db.GetDouble() : 0f,
+                    Writeable = m.TryGetProperty("writeable", out JsonElement wr) ? wr.GetBoolean() : false
+                });
+            }
+            mappingStore.SetAll(tags);
+        }
+
+        return Results.Json(new { status = "ok", message = "Configuration imported. Sources and mappings restored. Note: DCOM passwords must be re-entered." });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
 });
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 

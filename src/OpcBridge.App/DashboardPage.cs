@@ -355,6 +355,15 @@ internal static class DashboardPage
                         <button class="btn ghost" id="cfgNew" type="button">New</button>
                         <button class="btn ghost" id="cfgRemove" type="button">Remove</button>
                     </div>
+                    <div class="conn-section">
+                        <div class="conn-section-h">Backup & Restore <span class="info" data-tip="Export saves all DA sources + tag mappings to a JSON file. Import restores them. Passwords are NOT exported — re-enter after import.">i</span></div>
+                        <div class="field">
+                            <button class="btn" id="btnExportConfig" type="button">Export Config</button>
+                            <button class="btn ghost" id="btnImportConfig" type="button">Import Config</button>
+                            <input type="file" id="importConfigFile" accept=".json" style="display:none">
+                            <span class="msg" id="configBackupMsg">Backup includes sources + mappings. Passwords not included.</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1435,6 +1444,50 @@ function bindDynamicButtons() {
     });
 }
 
+async function exportConfig() {
+    el('configBackupMsg').textContent = 'Exporting…';
+    try {
+        const resp = await fetch('/api/config/export', { cache: 'no-store' });
+        const json = await resp.json();
+        const blob = new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        a.download = `opc-bridge-config-${ts}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        const srcCount = (json.daSources?.sources || []).length;
+        const mapCount = (json.mappings || []).length;
+        el('configBackupMsg').textContent = `Exported ${srcCount} source(s) + ${mapCount} mapping(s).`;
+    } catch (e) {
+        el('configBackupMsg').textContent = '✗ ' + e.message;
+    }
+}
+
+async function importConfig(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    el('configBackupMsg').textContent = 'Importing…';
+    try {
+        const text = await file.text();
+        const resp = await fetch('/api/config/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: text
+        });
+        const result = await resp.json();
+        if (!resp.ok) throw new Error(result.error || 'Import failed');
+        el('configBackupMsg').textContent = result.message || 'Imported.';
+        await loadSources();
+        await loadMappings();
+        await refresh();
+    } catch (e) {
+        el('configBackupMsg').textContent = '✗ ' + e.message;
+    }
+    event.target.value = '';
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     el('selectedSource').addEventListener('change', e => pickSource(e.target.value));
     el('mapSourceSelect').addEventListener('change', e => pickSource(e.target.value));
@@ -1446,6 +1499,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         el(id).addEventListener('input', () => { if (!state.editingNewSource) showSaveReset(); });
     });
     el('cfgApplyRate').addEventListener('click', () => saveUpdateRate().catch(e => el('rateMessage').textContent = '✗ ' + e.message));
+    el('btnExportConfig').addEventListener('click', exportConfig);
+    el('btnImportConfig').addEventListener('click', () => el('importConfigFile').click());
+    el('importConfigFile').addEventListener('change', importConfig);
     el('btnReloadServers').addEventListener('click', () => browseServers().catch(e => el('msgServers').textContent = e.message));
     el('btnBrowseTags').addEventListener('click', () => browseTags('').catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
     el('btnBrowseAllTags').addEventListener('click', () => browseTags('', true).catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));

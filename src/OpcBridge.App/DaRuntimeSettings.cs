@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Options;
 using OpcBridge.Da;
 
@@ -7,15 +8,29 @@ public sealed class DaRuntimeSettings
 {
     public const string DefaultSourceId = "default";
 
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+
     private readonly object sync_ = new();
+    private readonly string persist_path_;
     private DaRuntimeSettingsSnapshot snapshot_;
 
     public DaRuntimeSettings(IOptions<DaClientOptions> options)
     {
-        snapshot_ = new DaRuntimeSettingsSnapshot(
-            NormalizeUpdateRate(options.Value.UpdateRateMs),
-            BuildInitialSources(options.Value),
-            0);
+        persist_path_ = Path.Combine(AppContext.BaseDirectory, "sources.json");
+
+        // Load from sources.json if it exists; otherwise seed from appsettings.json.
+        DaRuntimeSettingsSnapshot? loaded = LoadFromDisk();
+        if (loaded is not null)
+        {
+            snapshot_ = loaded;
+        }
+        else
+        {
+            snapshot_ = new DaRuntimeSettingsSnapshot(
+                NormalizeUpdateRate(options.Value.UpdateRateMs),
+                BuildInitialSources(options.Value),
+                0);
+        }
     }
 
     public DaRuntimeSettingsSnapshot GetSnapshot()
@@ -51,6 +66,7 @@ public sealed class DaRuntimeSettings
                 Version = snapshot_.Version + 1
             };
 
+            Persist();
             return snapshot_;
         }
     }
@@ -83,6 +99,7 @@ public sealed class DaRuntimeSettings
                 Version = snapshot_.Version + 1
             };
 
+            Persist();
             snapshot = snapshot_;
             return true;
         }
@@ -99,6 +116,7 @@ public sealed class DaRuntimeSettings
                 Version = snapshot_.Version + 1
             };
 
+            Persist();
             return snapshot_;
         }
     }
@@ -125,6 +143,7 @@ public sealed class DaRuntimeSettings
                 Version = snapshot_.Version + 1
             };
 
+            Persist();
             return snapshot_;
         }
     }
@@ -233,6 +252,77 @@ public sealed class DaRuntimeSettings
         return Math.Max(100, updateRateMs);
     }
 
+    private void Persist()
+    {
+        try
+        {
+            lock (sync_)
+            {
+                var dto = new SourcesConfigDto
+                {
+                    UpdateRateMs = snapshot_.UpdateRateMs,
+                    Sources = snapshot_.Sources
+                        .Select(s => new SourceConfigDto
+                        {
+                            SourceId = s.SourceId,
+                            DisplayName = s.DisplayName,
+                            ProgId = s.ProgId,
+                            Host = s.Host,
+                            RemoteUsername = s.RemoteUsername,
+                            RemotePassword = s.RemotePassword,
+                            RemoteDomain = s.RemoteDomain,
+                            UpdateRateMs = s.UpdateRateMs
+                        })
+                        .ToList()
+                };
+                string json = JsonSerializer.Serialize(dto, JsonOptions);
+                File.WriteAllText(persist_path_, json);
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private DaRuntimeSettingsSnapshot? LoadFromDisk()
+    {
+        try
+        {
+            if (!File.Exists(persist_path_)) return null;
+            string json = File.ReadAllText(persist_path_);
+            SourcesConfigDto? dto = JsonSerializer.Deserialize<SourcesConfigDto>(json);
+            if (dto is null) return null;
+
+            List<DaSourceRuntimeSettings> sources = dto.Sources?
+                .Select(s => new DaSourceRuntimeSettings(
+                    s.SourceId ?? DefaultSourceId,
+                    s.DisplayName ?? string.Empty,
+                    s.ProgId ?? string.Empty,
+                    string.IsNullOrWhiteSpace(s.Host) ? "localhost" : s.Host,
+                    string.IsNullOrWhiteSpace(s.RemoteUsername) ? null : s.RemoteUsername,
+                    string.IsNullOrWhiteSpace(s.RemotePassword) ? null : s.RemotePassword,
+                    string.IsNullOrWhiteSpace(s.RemoteDomain) ? null : s.RemoteDomain,
+                    s.UpdateRateMs <= 0 ? dto.UpdateRateMs : s.UpdateRateMs))
+                .ToList() ?? new List<DaSourceRuntimeSettings>();
+
+            if (sources.Count == 0) return null;
+
+            return new DaRuntimeSettingsSnapshot(dto.UpdateRateMs, sources, 0);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public void RestoreFromSnapshot(DaRuntimeSettingsSnapshot snapshot)
+    {
+        lock (sync_)
+        {
+            snapshot_ = snapshot with { Version = snapshot_.Version + 1 };
+            Persist();
+        }
+    }
 
 }
 
@@ -276,4 +366,22 @@ public sealed record DaSourceRuntimeSettings(
             RemoteDomain = RemoteDomain
         };
     }
+}
+
+internal sealed class SourcesConfigDto
+{
+    public int UpdateRateMs { get; set; } = 1000;
+    public List<SourceConfigDto> Sources { get; set; } = new();
+}
+
+internal sealed class SourceConfigDto
+{
+    public string? SourceId { get; set; }
+    public string? DisplayName { get; set; }
+    public string? ProgId { get; set; }
+    public string? Host { get; set; }
+    public string? RemoteUsername { get; set; }
+    public string? RemotePassword { get; set; }
+    public string? RemoteDomain { get; set; }
+    public int UpdateRateMs { get; set; }
 }
