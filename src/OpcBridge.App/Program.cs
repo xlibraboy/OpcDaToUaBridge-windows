@@ -279,6 +279,33 @@ app.MapPost("/api/mappings/add", (MappingAddRequest request, MappingStore store)
     long version = store.Add(tags);
     return Results.Json(new { version });
 });
+app.MapPost("/api/mappings/bulk-add", (MappingAddRequest request, MappingStore store) =>
+{
+    if (request.Tags is null || request.Tags.Count == 0)
+    {
+        return Results.BadRequest(new { error = "At least one mapping is required." });
+    }
+
+    IEnumerable<TagMapping> tags = request.Tags
+        .Select(tag => new TagMapping
+        {
+            SourceId = string.IsNullOrWhiteSpace(tag.SourceId) ? "default" : tag.SourceId,
+            DaItemId = tag.DaItemId ?? string.Empty,
+            DisplayName = tag.DisplayName ?? string.Empty,
+            DataType = tag.DataType ?? "Auto",
+            UaNodeId = tag.UaNodeId ?? string.Empty,
+            Enabled = tag.Enabled ?? true,
+            Mode = string.IsNullOrWhiteSpace(tag.Mode) ? TagMode.Source : tag.Mode,
+            ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue,
+            PollRateMs = tag.PollRateMs ?? 0,
+            DeadbandPct = tag.DeadbandPct ?? 0f,
+            Writeable = tag.Writeable ?? false
+        })
+        .Where(tag => !string.IsNullOrWhiteSpace(tag.DaItemId));
+
+    long version = store.Add(tags);
+    return Results.Json(new { version, received = request.Tags.Count });
+});
 app.MapPost("/api/mappings/update", (MappingUpdateRequest request, MappingStore store) =>
 {
     if (string.IsNullOrWhiteSpace(request.Tag.SourceId) || string.IsNullOrWhiteSpace(request.Tag.DaItemId))

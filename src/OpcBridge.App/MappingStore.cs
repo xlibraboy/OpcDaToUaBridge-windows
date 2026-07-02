@@ -36,6 +36,14 @@ public sealed class MappingStore
     {
         lock (sync_)
         {
+            // Build a HashSet of existing keys for O(1) duplicate lookup
+            // instead of O(n) per-tag scan (O(n²) total for bulk imports).
+            HashSet<(string SourceId, string DaItemId)> existing = new(mappings_.Count, StringTupleComparer.Instance);
+            for (int i = 0; i < mappings_.Count; i++)
+            {
+                existing.Add((mappings_[i].SourceId, mappings_[i].DaItemId));
+            }
+
             bool changed = false;
 
             foreach (TagMapping tag in tags)
@@ -46,9 +54,7 @@ public sealed class MappingStore
                     continue;
                 }
 
-                if (mappings_.Any(mapping =>
-                    string.Equals(mapping.SourceId, normalized.SourceId, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(mapping.DaItemId, normalized.DaItemId, StringComparison.OrdinalIgnoreCase)))
+                if (!existing.Add((normalized.SourceId, normalized.DaItemId)))
                 {
                     continue;
                 }
