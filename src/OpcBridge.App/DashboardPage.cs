@@ -196,8 +196,8 @@ internal static class DashboardPage
         .kv .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
         .kv .v { word-break: break-word; }
         @media (max-width: 1100px) { .split { grid-template-columns: 1fr; } }
-        .conn-layout { display: flex; flex-direction: column; gap: 14px; }
-        .conn-side { display: flex; flex-direction: column; gap: 14px; }
+        .conn-layout { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; align-items: start; }
+        @media (max-width: 1000px) { .conn-layout { grid-template-columns: 1fr; } }
         .conn-section { padding: 10px 0; border-top: 1px solid var(--border); }
         .conn-section:first-of-type { border-top: none; padding-top: 4px; }
         .conn-section-h { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
@@ -206,12 +206,6 @@ internal static class DashboardPage
         .info:hover { color: var(--accent); border-color: var(--accent); }
         .tip { position: fixed; z-index: 9999; background: var(--panel2); color: var(--text); border: 1px solid var(--border2); border-radius: 5px; padding: 7px 11px; font-size: 11px; font-weight: 400; line-height: 1.5; max-width: 280px; box-shadow: 0 6px 16px rgba(0,0,0,.4); pointer-events: none; opacity: 0; transition: opacity .1s ease; }
         .tip.show { opacity: 1; }
-        .subtabs { display: flex; gap: 0; margin-bottom: 14px; border-bottom: 1px solid var(--border2); }
-        .subtab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); padding: 8px 16px; font-size: 12px; font-weight: 600; cursor: pointer; }
-        .subtab:hover { color: var(--text); }
-        .subtab.active { color: var(--accent); border-bottom-color: var(--accent); }
-        .subpanel { display: none; }
-        .subpanel.active { display: block; }
     </style>
 </head>
 <body>
@@ -336,12 +330,6 @@ internal static class DashboardPage
 <div class="view" id="view-connection">
     <div class="conn-layout">
         <div class="conn-main">
-            <div class="subtabs">
-                <button class="subtab active" data-subtab="da-sources">DA Sources</button>
-                <button class="subtab" data-subtab="ua-settings">UA Settings</button>
-                <button class="subtab" data-subtab="security">Security & Backup</button>
-            </div>
-            <div class="subpanel active" id="subpanel-da-sources">
             <div class="box">
                 <div class="box-h">Server Connection <span class="msg" id="cfgMessage" style="margin-left:auto;font-weight:400;text-transform:none;letter-spacing:0">Select a saved connection or click New.</span></div>
                 <div class="box-b">
@@ -372,6 +360,8 @@ internal static class DashboardPage
                     </div>
                 </div>
             </div>
+        </div>
+        <div class="conn-side">
             <div class="box">
                 <div class="box-h">Discover Servers</div>
                 <div class="box-b">
@@ -386,43 +376,6 @@ internal static class DashboardPage
                 <div class="box-h">Saved Connections <span class="msg" id="pSourcesSide" style="margin-left:auto"></span></div>
                 <div class="box-b">
                     <div class="list" id="sourcesList" style="max-height:280px"></div>
-                </div>
-            </div>
-            </div>
-            <div class="subpanel" id="subpanel-ua-settings">
-                <div class="box">
-                    <div class="box-h">UA Server Settings <span class="info" data-tip="OPC UA server endpoint and security. Changes are saved to ua-settings.json and applied on restart.">i</span></div>
-                    <div class="box-b">
-                        <div class="field"><label class="fl">Endpoint</label><input id="uaEndpointInput" type="text" placeholder="opc.tcp://0.0.0.0:4840/OpcDaToUaBridge" style="flex:1"></div>
-                        <div class="field"><label class="fl" style="width:auto">Auto-accept certs</label><input type="checkbox" id="uaAutoAccept"></div>
-                        <div class="field"><label class="fl" style="width:auto">Require auth</label><input type="checkbox" id="uaRequireAuth"></div>
-                        <div class="field"><label class="fl">Username</label><input id="uaUsername" type="text" placeholder="(username)" style="flex:1"></div>
-                        <div class="field"><label class="fl">Password</label><input id="uaPassword" type="password" placeholder="(leave blank to keep)" style="flex:1"></div>
-                        <div class="field" style="margin-bottom:0"><button class="btn" type="button" id="btnSaveUaSettings">Save UA Settings</button><span class="msg" id="uaSettingsMsg">Changes apply on restart.</span></div>
-                    </div>
-                </div>
-            </div>
-            <div class="subpanel" id="subpanel-security">
-                <div class="box">
-                    <div class="box-h">Backup & Restore <span class="info" data-tip="Export saves all DA sources + tag mappings to a JSON file. Import restores them. Passwords are NOT exported — re-enter after import.">i</span></div>
-                    <div class="box-b">
-                        <div class="field">
-                            <button class="btn" id="btnExportConfig" type="button">Export Config</button>
-                            <button class="btn ghost" id="btnImportConfig" type="button">Import Config</button>
-                            <input type="file" id="importConfigFile" accept=".json" style="display:none">
-                            <span class="msg" id="configBackupMsg">Backup includes sources + mappings. Passwords not included.</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="box" style="margin-top:14px">
-                    <div class="box-h">UA Client Certificates <span class="info" data-tip="When AutoAcceptUntrustedCertificates is false, new UA client certs are saved to rejected. Approve them here.">i</span></div>
-                    <div class="box-b" style="padding:8px 0">
-                        <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px">Rejected (pending approval)</div>
-                        <div class="list" id="uaCertRejected" style="max-height:150px;margin-bottom:8px"><span class="msg">Loading…</span></div>
-                        <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px">Trusted (approved)</div>
-                        <div class="list" id="uaCertTrusted" style="max-height:150px"><span class="msg">Loading…</span></div>
-                        <div class="toolbar" style="margin-top:8px"><button class="btn ghost" type="button" id="btnRefreshCerts">Refresh</button><span class="msg" id="certMsg"></span></div>
-                    </div>
                 </div>
             </div>
         </div>
@@ -686,10 +639,6 @@ function showTab(name) {
     else { diagnosticsActive = false; }
     if (name === 'about') loadAppInfo().catch(e => el('aboutName').textContent = '✗ ' + e.message);
     if (name === 'help') loadHelp().catch(e => el('helpContent').innerHTML = '<span class="msg bad">✗ ' + esc(e.message) + '</span>');
-}
-function showSubtab(name) {
-    document.querySelectorAll('.subtab').forEach(b => b.classList.toggle('active', b.dataset.subtab === name));
-    document.querySelectorAll('.subpanel').forEach(p => p.classList.toggle('active', p.id === 'subpanel-' + name));
 }
 function badge(t, c) { return `<span class="badge ${c}">${esc(t)}</span>`; }
 function stateClass(v) {
@@ -1503,123 +1452,6 @@ function bindDynamicButtons() {
     });
 }
 
-async function exportConfig() {
-    el('configBackupMsg').textContent = 'Exporting…';
-    try {
-        const resp = await fetch('/api/config/export', { cache: 'no-store' });
-        const json = await resp.json();
-        const blob = new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        a.download = `opc-bridge-config-${ts}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-        const srcCount = (json.daSources?.sources || []).length;
-        const mapCount = (json.mappings || []).length;
-        el('configBackupMsg').textContent = `Exported ${srcCount} source(s) + ${mapCount} mapping(s).`;
-    } catch (e) {
-        el('configBackupMsg').textContent = '✗ ' + e.message;
-    }
-}
-
-async function importConfig(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-    el('configBackupMsg').textContent = 'Importing…';
-    try {
-        const text = await file.text();
-        const resp = await fetch('/api/config/import', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: text
-        });
-        const result = await resp.json();
-        if (!resp.ok) throw new Error(result.error || 'Import failed');
-        el('configBackupMsg').textContent = result.message || 'Imported.';
-        await loadSources();
-        await loadMappings();
-        await refresh();
-    } catch (e) {
-        el('configBackupMsg').textContent = '✗ ' + e.message;
-    }
-    event.target.value = '';
-}
-
-async function loadUaSettings() {
-    try {
-        const p = await (await fetch('/api/ua/settings', { cache: 'no-store' })).json();
-        el('uaEndpointInput').value = p.endpointUrl || '';
-        el('uaAutoAccept').checked = p.autoAcceptUntrustedCertificates !== false;
-        el('uaRequireAuth').checked = p.requireAuthentication === true;
-        el('uaUsername').value = p.username || '';
-        el('uaPassword').value = '';
-    } catch (e) {
-        el('uaSettingsMsg').textContent = '✗ ' + e.message;
-    }
-}
-
-async function saveUaSettings() {
-    el('uaSettingsMsg').textContent = 'Saving…';
-    try {
-        const body = {
-            endpointUrl: el('uaEndpointInput').value.trim(),
-            autoAcceptUntrustedCertificates: el('uaAutoAccept').checked,
-            requireAuthentication: el('uaRequireAuth').checked,
-            username: el('uaUsername').value.trim(),
-            password: el('uaPassword').value || null
-        };
-        const r = await fetch('/api/ua/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-        const p = await r.json();
-        if (!r.ok) throw new Error(p.error || 'Save failed');
-        el('uaSettingsMsg').textContent = p.message || 'Saved.';
-        el('uaPassword').value = '';
-        await refresh();
-    } catch (e) {
-        el('uaSettingsMsg').textContent = '✗ ' + e.message;
-    }
-}
-
-async function loadUaCerts() {
-    try {
-        const p = await (await fetch('/api/ua/certificates', { cache: 'no-store' })).json();
-        const renderCerts = (certs, actionBtn, actionLabel, actionFn) => {
-            if (!certs || certs.length === 0) return '<span class="msg">None.</span>';
-            return certs.map(c => {
-                const size = c.sizeBytes < 1024 ? c.sizeBytes + ' B' : (c.sizeBytes / 1024).toFixed(1) + ' KB';
-                const date = c.lastModifiedUtc ? shortTime(c.lastModifiedUtc) : '—';
-                return `<div class="li"><div style="flex:1"><div class="n" title="${attr(c.fileName)}">${esc(c.fileName)}</div><div class="p">${size} · ${date}</div></div><button class="btn ghost" data-cert-action="${actionFn}" data-cert-file="${attr(c.fileName)}">${actionLabel}</button></div>`;
-            }).join('');
-        };
-        el('uaCertRejected').innerHTML = renderCerts(p.rejected, 'approve', 'Approve', 'approve');
-        el('uaCertTrusted').innerHTML = renderCerts(p.trusted, 'reject', 'Reject', 'reject')
-            + (p.trusted && p.trusted.length ? '' : '');
-    } catch (e) {
-        el('certMsg').textContent = '✗ ' + e.message;
-    }
-}
-
-async function certAction(action, fileName) {
-    el('certMsg').textContent = '';
-    try {
-        const r = await fetch('/api/ua/certificates/' + action, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fileName })
-        });
-        const p = await r.json();
-        if (!r.ok) throw new Error(p.error || 'Action failed');
-        el('certMsg').textContent = p.message || 'Done.';
-        await loadUaCerts();
-    } catch (e) {
-        el('certMsg').textContent = '✗ ' + e.message;
-    }
-}
 
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -1633,23 +1465,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         el(id).addEventListener('input', () => { if (!state.editingNewSource) showSaveReset(); });
     });
     el('cfgApplyRate').addEventListener('click', () => saveUpdateRate().catch(e => el('rateMessage').textContent = '✗ ' + e.message));
-    el('btnExportConfig').addEventListener('click', exportConfig);
-    el('btnImportConfig').addEventListener('click', () => el('importConfigFile').click());
-    el('importConfigFile').addEventListener('change', importConfig);
-    el('btnRefreshCerts').addEventListener('click', () => loadUaCerts());
-    ['uaCertRejected', 'uaCertTrusted'].forEach(id => {
-        el(id).addEventListener('click', e => {
-            const btn = e.target.closest('button[data-cert-action]');
-            if (!btn) return;
-            certAction(btn.dataset.certAction, btn.dataset.certFile);
-        });
-    });
-    loadUaCerts();
-    el('btnSaveUaSettings').addEventListener('click', saveUaSettings);
-    loadUaSettings();
-    document.querySelectorAll('.subtab').forEach(btn => {
-        btn.addEventListener('click', () => showSubtab(btn.dataset.subtab));
-    });
     el('btnReloadServers').addEventListener('click', () => browseServers().catch(e => el('msgServers').textContent = e.message));
     el('btnBrowseTags').addEventListener('click', () => browseTags('').catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
     el('btnBrowseAllTags').addEventListener('click', () => browseTags('', true).catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
