@@ -289,6 +289,10 @@ internal static class DashboardPage
         <div class="box-h">DA Source Diagnostics <span class="msg" id="diagDaSummary" style="margin-left:auto"></span></div>
         <div class="box-b" id="diagDaSources"><span class="msg">Loading…</span></div>
     </div>
+    <div class="box" style="margin-bottom:14px">
+        <div class="box-h">Time Sync <span class="info" data-tip="Compares the DA server's clock to the bridge machine's clock. A large offset (>500ms) indicates the DA server or bridge needs NTP time sync. UA clients receive both SourceTimestamp (DA server time) and ServerTimestamp (bridge time) for each value.">i</span></div>
+        <div class="box-b"><div class="list" id="diagTimeSync"><span class="msg">Loading…</span></div></div>
+    </div>
     <div class="grid2" style="margin-bottom:14px">
         <div class="box">
             <div class="box-h">UA Sessions <span class="msg" id="diagUaSessionCount" style="margin-left:auto"></span></div>
@@ -812,10 +816,24 @@ function renderDiagnostics(p) {
     el('diagDaSources').innerHTML = daHtml;
     el('diagDaSummary').textContent = sources.length + ' source' + (sources.length !== 1 ? 's' : '');
 
-    // Store rateGroups for DA section reuse
-    if (p.bridge && p.bridge.uaBandwidth) {
-        state.rateGroups = state.rateGroups || [];
-    }
+    // Time Sync — DA server clock vs bridge clock
+    const timeSyncHtml = sources.length ? sources.map(src => {
+        const sid = get(src, 'sourceId') || 'default';
+        const name = get(src, 'displayName') || sid;
+        const offset = get(src, 'daClockOffsetMs');
+        let offsetText, offsetCls;
+        if (offset === null || offset === undefined) {
+            offsetText = '—'; offsetCls = 'msg';
+        } else {
+            const ms = Number(offset);
+            offsetText = (ms >= 0 ? '+' : '') + ms.toFixed(1) + ' ms';
+            offsetCls = Math.abs(ms) > 500 ? 'bad' : (Math.abs(ms) > 100 ? 'warn' : 'good');
+        }
+        const bridgeTime = get(src, 'lastDaReadUtc') ? shortTime(get(src, 'lastDaReadUtc')) : '—';
+        return `<div class="li"><div style="flex:1"><div class="n">${esc(name)}</div><div class="p">DA server clock offset: <span class="${offsetCls}">${offsetText}</span> · bridge read at ${bridgeTime}</div></div></div>`;
+    }).join('') : '<span class="msg">No sources.</span>';
+    el('diagTimeSync').innerHTML = timeSyncHtml;
+
 
     // UA Sessions
     const sessions = (p.ua && p.ua.sessions) || [];

@@ -33,7 +33,8 @@ public sealed class BridgeState
                 null,
                 null,
                 0,
-                0))
+                0,
+                null))
             .ToArray();
 
         rate_groups_.Clear();
@@ -79,7 +80,8 @@ public sealed class BridgeState
                         null,
                         null,
                         0,
-                        0);
+                        0,
+                        null);
                 }
                 else
                 {
@@ -223,6 +225,7 @@ public sealed class BridgeState
     public void UpdateDaRead(string sourceId, IReadOnlyList<BridgeValue> values, TimeSpan readDuration)
     {
         DateTime readTime = DateTime.UtcNow;
+        double? clockOffsetMs = null;
 
         for (int i = 0; i < values.Count; i++)
         {
@@ -234,6 +237,12 @@ public sealed class BridgeState
                 value.TimestampUtc,
                 value.DaQuality,
                 value.IsGood);
+
+            // Compute clock offset from the first good value: bridge time − DA server time
+            if (clockOffsetMs is null && value.IsGood && value.TimestampUtc > DateTime.MinValue)
+            {
+                clockOffsetMs = Math.Round((readTime - value.TimestampUtc).TotalMilliseconds, 1);
+            }
         }
 
         lock (status_lock_)
@@ -246,7 +255,8 @@ public sealed class BridgeState
                         LastDaReadUtc = readTime,
                         LastDaReadCount = values.Count,
                         LastDaReadDurationMs = ToMilliseconds(readDuration),
-                        LastError = null
+                        LastError = null,
+                        DaClockOffsetMs = clockOffsetMs
                     }
                     : source)
                 .ToArray();
@@ -439,7 +449,8 @@ public sealed record DaSourceStatusSnapshot(
     DateTime? LastDaReadUtc,
     string? LastError,
     int LastDaReadCount,
-    double LastDaReadDurationMs);
+    double LastDaReadDurationMs,
+    double? DaClockOffsetMs);
 
 public sealed record BridgeValueSnapshot(
     string SourceId,
