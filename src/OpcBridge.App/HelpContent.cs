@@ -477,74 +477,132 @@ Use the **Connection tab → Backup & Restore** section in the dashboard:
 Both `mappings.json` and `sources.json` can also be copied directly for backup.
 ---
 
-# Updating
+# Updating to a New Version
 
-Updates are **local only** — no internet required, no admin. New app files are copied from a USB drive or network share.
+Updates are **local only** — no internet, no admin. Overwrite the DLLs and restart. Your config and tag mappings are preserved.
 
-## Check current version
+## Before you update
 
-The version badge is shown in the topbar next to the app name (e.g. **v1.0.0**), or call `http://localhost:8080/api/version` to confirm.
+1. **Check current version** — look at the topbar badge (e.g. **v1.0.0**) or call `http://localhost:8080/api/version`
+2. **Export a backup** — Connection tab → Backup & Restore → **Export Config** (saves all sources + mappings to a JSON file). This is your safety net if anything goes wrong.
+3. **Get the new version files** — a `publish` folder from the developer (USB drive, network share, SCP, etc.)
+
+## What's in a new version
+
+The new `publish` folder contains updated DLLs and possibly updated scripts:
+
+| File | Overwrite? | Why |
+|------|-----------|-----|
+| `OpcBridge.App.dll` | ✅ Always | Main app binary — contains all new features and fixes |
+| `OpcBridge.Da.dll` | ✅ Always | DA client library — COM, subscriptions, writes |
+| `OpcBridge.Core.dll` | ✅ Always | Shared types — TagMapping, BridgeValue, etc. |
+| `OpcBridge.Ua.dll` | ✅ Always | UA server library — node manager, write handler |
+| `OpcBridge.App.deps.json` | ✅ Always | Dependency manifest — must match the DLLs |
+| `OpcBridge.App.runtimeconfig.json` | ✅ Always | Runtime config — may change framework version |
+| `*.dll` (Opc.Ua.*, Microsoft.*) | ✅ Always | SDK dependencies — may be updated |
+| `appsettings.json` | ⚠️ Only if schema changed | Your DA config — see below |
+| `scripts\windows\*.cmd, *.ps1` | ✅ If provided | Launcher and task scripts may change |
+| `mappings.json` | ❌ Never | Your tag mappings |
+| `sources.json` | ❌ Never | Your saved DA source connections |
+| `pki\` | ❌ Never | OPC UA certificates |
 
 ## Update steps
 
-```
- 1. Receive new version files (USB drive, network share, etc.)
-    New folder contains:
-    OpcBridge.App.dll     ← updated app
-    OpcBridge.Da.dll      ← updated DA library (if changed)
-    OpcBridge.Core.dll    ← updated core library (if changed)
-    appsettings.json      ← only if config schema changed
-    update.cmd            ← optional update helper script
+### Step 1 — Stop the bridge
 
- 2. Stop the running app
-    schtasks /end /tn OpcDaToUaBridge
+```powershell
+# Stop the scheduled task
+schtasks /end /tn OpcDaToUaBridge
 
- 3. Copy new files over the old ones
-    copy /Y OpcBridge.App.dll  %LOCALAPPDATA%\OpcDaToUaBridge\
-    copy /Y OpcBridge.Da.dll   %LOCALAPPDATA%\OpcDaToUaBridge\
-    copy /Y OpcBridge.Core.dll %LOCALAPPDATA%\OpcDaToUaBridge\
+# Wait 2 seconds, then kill any lingering dotnet process
+Start-Sleep -Seconds 2
+Get-Process dotnet -ErrorAction SilentlyContinue | Stop-Process -Force
 
- 4. Restart the task
-    schtasks /run /tn OpcDaToUaBridge
-
- 5. Confirm the new version
-    Check topbar badge → should show new version (e.g. v1.1.0)
-    Check Monitor tab → Bridge = Running
-
- Note: appsettings.json and mappings.json are user data — do NOT
-       overwrite them unless the config schema changed. Your source
-       configs and tag mappings are preserved across updates.
+# Verify it's stopped
+Get-Process dotnet -ErrorAction SilentlyContinue
+# Should return nothing
 ```
 
-## Using update.cmd (helper script)
+**Why kill dotnet?** The scheduled task may stop but leave the dotnet process running. If you try to overwrite a DLL that's in use, Windows will error with "file in use".
 
-If provided, `update.cmd` automates steps 2–5. Place it in the same folder as the new DLL files and double-click it:
+### Step 2 — Copy new files
 
+```powershell
+# Copy ALL files from the new publish folder, EXCEPT user data
+cd C:\OpcDaToUaBridge
+
+# Copy everything from the new publish folder
+xcopy /Y /S <new-publish-folder>\* publish\
+
+# Restore user data if xcopy overwrote them (it shouldn't if you excluded them)
+# mappings.json and sources.json should already be excluded — verify:
+if (Test-Path publish\mappings.json) { "mappings.json: OK" } else { "mappings.json: MISSING!" }
+if (Test-Path publish\sources.json) { "sources.json: OK" } else { "sources.json: MISSING!" }
 ```
- update.cmd (example)
- ─────────────────────────────────────────────────────
- @echo off
- schtasks /end /tn OpcDaToUaBridge
- ping -n 4 127.0.0.1 >nul
- copy /Y OpcBridge.App.dll  "%LOCALAPPDATA%\OpcDaToUaBridge\"
- copy /Y OpcBridge.Da.dll   "%LOCALAPPDATA%\OpcDaToUaBridge\"
- copy /Y OpcBridge.Core.dll "%LOCALAPPDATA%\OpcDaToUaBridge\"
- schtasks /run /tn OpcDaToUaBridge
- echo Update complete. New version is now running.
- pause
+
+**If `appsettings.json` changed schema** (new config keys added):
+- The new `appsettings.json` may have new sections. Merge your existing values into the new file manually.
+- Your `mappings.json` and `sources.json` are NOT affected — they override `appsettings.json` at runtime.
+
+### Step 3 — Update scripts (if provided)
+
+```powershell
+# Copy updated scripts if the new version includes them
+xcopy /Y /S <new-version>\scripts\windows\ scripts\windows\
 ```
+
+### Step 4 — Restart
+
+```powershell
+# Start the bridge
+schtasks /run /tn OpcDaToUaBridge
+
+# Wait for startup
+Start-Sleep -Seconds 10
+
+# Check health
+(Invoke-RestMethod http://localhost:8080/health).status
+# Should return: ok
+```
+
+### Step 5 — Verify
+
+| Check | How | Expected |
+|-------|-----|----------|
+| Version | Topbar badge or `/api/version` | New version number |
+| Health | `http://localhost:8080/health` | `{"status":"ok"}` |
+| Bridge state | Monitor → Bridge | Running |
+| DA connection | Monitor → DA | Connected |
+| Tag count | Monitor → Tags | Same as before update |
+| Mappings | Tags tab | All your tags are still there |
+| Sources | Connection tab | All your sources are still there |
+
+If DA shows Faulted after update, check `/api/logs` for errors. If `appsettings.json` was overwritten with wrong DA config, fix the ProgID/Host and restart.
+
+## Quick update (one-liner)
+
+If you have the new publish folder on the same machine:
+
+```powershell
+schtasks /end /tn OpcDaToUaBridge; Get-Process dotnet -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 2; xcopy /Y /S C:\new-publish\* C:\OpcDaToUaBridge\publish\; schtasks /run /tn OpcDaToUaBridge; Start-Sleep 10; (Invoke-RestMethod http://localhost:8080/health).status
+```
+
+## If something goes wrong
+
+1. **Bridge won't start** — check `publish\bridge-task-stderr.log` for the crash error
+2. **DA Faulted** — check the dashboard logs tab or `/api/logs?limit=50`; verify `appsettings.json` Da:ProgId and Da:Host
+3. **Lost mappings** — restore from the backup JSON: Connection tab → Backup & Restore → Import Config
+4. **Roll back** — keep the old `publish` folder renamed to `publish.old`; if the new version fails, stop the task, rename `publish.old` back to `publish`, restart
 
 ## What is preserved across updates
 
-| File | Updated? | Notes |
-|------|----------|-------|
-| `OpcBridge.App.dll` | ✅ Yes | Main app binary |
-| `OpcBridge.Da.dll` | ✅ Yes | DA client library |
-| `OpcBridge.Core.dll` | ✅ Yes | Shared types |
-| `appsettings.json` | ⚠️ Only if schema changed | Source configs, host, rates |
-| `mappings.json` | ❌ Never overwrite | Your tag mappings |
-| `pki/` | ❌ Never overwrite | OPC UA certificates |
-
+| File | Overwritten? | Notes |
+|------|-------------|-------|
+| `mappings.json` | ❌ Never | Your tag mappings — survives all updates |
+| `sources.json` | ❌ Never | Your DA source connections — survives all updates |
+| `pki/` | ❌ Never | OPC UA certificates — never overwrite |
+| `appsettings.json` | ⚠️ Only if you choose to | Merge new keys into your existing file |
+| `bridge-task-*.log` | ✅ Cleared on restart | Old logs are deleted by the launcher |
 ---
 
 # Configuration Reference
