@@ -155,49 +155,103 @@ public sealed class OpcDaClient : IDaClient
             throw new InvalidOperationException($"OPC DA server ProgID '{progId}' is not registered (CLSIDFromProgID failed 0x{clsidHr:X8}).");
         }
 
-        // Auth is established by ConnectWithImpersonation's LogonUser + RunImpersonated
-        // wrapper, so COSERVERINFO.pAuthInfo = IntPtr.Zero (use the thread's impersonation token).
-        COSERVERINFO serverInfo = new()
+        // Build COAUTHIDENTITY with explicit credentials so DCOM authenticates to the remote host.
+        // Without this, CoCreateInstanceEx uses the process token, which fails with 80070005
+        // when the local user has no rights on the remote DCOM server.
+        string username = options_.RemoteUsername ?? string.Empty;
+        string password = options_.RemotePassword ?? string.Empty;
+        string domain = string.IsNullOrWhiteSpace(options_.RemoteDomain) ? host! : options_.RemoteDomain!;
+
+        IntPtr userPtr = Marshal.StringToHGlobalUni(username);
+        IntPtr passPtr = Marshal.StringToHGlobalUni(password);
+        IntPtr domainPtr = Marshal.StringToHGlobalUni(domain);
+        IntPtr authInfoPtr = IntPtr.Zero;
+
+        try
         {
-            pwszName = host,
-            pAuthInfo = IntPtr.Zero
-        };
+            COAUTHIDENTITY authIdentity = new()
+            {
+                User = userPtr,
+                UserLength = username.Length,
+                Domain = domainPtr,
+                DomainLength = domain.Length,
+                Password = passPtr,
+                PasswordLength = password.Length,
+                Flags = 2 // SEC_WINNT_AUTH_IDENTITY_UNICODE
+            };
 
-        Guid iid = typeof(IOPCServer).GUID;
-        MULTI_QI[] results = new MULTI_QI[1];
-        results[0].pIID = iid;
-        results[0].pItf = IntPtr.Zero;
-        results[0].hr = 0;
+            authInfoPtr = Marshal.AllocHGlobal(Marshal.SizeOf<COAUTHIDENTITY>());
+            Marshal.StructureToPtr(authIdentity, authInfoPtr, false);
 
-        int hr = CoCreateInstanceEx(
-            ref clsid,
-            IntPtr.Zero,
-            CLSCTX_REMOTE_SERVER,
-            ref serverInfo,
-            1,
-            results);
+            COAUTHINFO authInfo = new()
+            {
+                dwAuthnSvc = RPC_C_AUTHN_WINNT,
+                dwAuthzSvc = RPC_C_AUTHZ_NONE,
+                pwszServerPrincipalName = IntPtr.Zero,
+                dwAuthnLevel = RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
+                dwImpersonationLevel = RPC_C_IMP_LEVEL_IMPERSONATE,
+                pAuthIdentityData = authInfoPtr,
+                dwCapabilities = EOAC_NONE
+            };
 
-        if (hr < 0)
-        {
-            string hint = hr == E_ACCESSDENIED
-                ? " — access denied. Verify DCOM permissions, credentials, and authentication level on the remote host."
-                : string.Empty;
-            throw new InvalidOperationException(
-                $"CoCreateInstanceEx for '{progId}' on host '{host}' failed (0x{hr:X8}).{hint}");
+            IntPtr authInfoStructPtr = Marshal.AllocHGlobal(Marshal.SizeOf<COAUTHINFO>());
+            Marshal.StructureToPtr(authInfo, authInfoStructPtr, false);
+
+            COSERVERINFO serverInfo = new()
+            {
+                dwReserved = IntPtr.Zero,
+                pwszName = host,
+                pAuthInfo = authInfoStructPtr
+            };
+
+            Guid iid = typeof(IOPCServer).GUID;
+            MULTI_QI[] results = new MULTI_QI[1];
+            results[0].pIID = iid;
+            results[0].pItf = IntPtr.Zero;
+            results[0].hr = 0;
+
+            int hr = CoCreateInstanceEx(
+                ref clsid,
+                IntPtr.Zero,
+                CLSCTX_REMOTE_SERVER,
+                ref serverInfo,
+                1,
+                results);
+
+            // Free the COAUTHINFO struct (COM already copied what it needs).
+            Marshal.DestroyStructure<COAUTHINFO>(authInfoStructPtr);
+            Marshal.FreeHGlobal(authInfoStructPtr);
+            Marshal.DestroyStructure<COAUTHIDENTITY>(authInfoPtr);
+            Marshal.FreeHGlobal(authInfoPtr);
+
+            if (hr < 0)
+            {
+                string hint = hr == E_ACCESSDENIED
+                    ? " — access denied (0x80070005). Check: (1) DCOM launch/access permissions on the remote host for this user (dcomcnfg → DCOM Config → server → Security), (2) username/domain/password are correct, (3) Windows Firewall allows Remote Administration on the remote host."
+                    : string.Empty;
+                throw new InvalidOperationException(
+                    $"CoCreateInstanceEx for '{progId}' on host '{host}' failed (0x{hr:X8}).{hint}");
+            }
+
+            if (results[0].hr < 0)
+            {
+                throw new InvalidOperationException(
+                    $"Remote activation of '{progId}' on host '{host}' failed (QueryInterface 0x{results[0].hr:X8}).");
+            }
+
+            object serverObj = Marshal.GetObjectForIUnknown(results[0].pItf);
+            IOPCServer remoteServer = serverObj as IOPCServer
+                ?? throw new InvalidOperationException($"Remote COM server '{progId}' does not expose IOPCServer.");
+
+            server_com_object_ = serverObj;
+            server_ = remoteServer;
         }
-
-        if (results[0].hr < 0)
+        finally
         {
-            throw new InvalidOperationException(
-                $"Remote activation of '{progId}' on host '{host}' failed (QueryInterface 0x{results[0].hr:X8}).");
+            Marshal.FreeHGlobal(userPtr);
+            Marshal.FreeHGlobal(passPtr);
+            Marshal.FreeHGlobal(domainPtr);
         }
-
-        object serverObj = Marshal.GetObjectForIUnknown(results[0].pItf);
-        IOPCServer remoteServer = serverObj as IOPCServer
-            ?? throw new InvalidOperationException($"Remote COM server '{progId}' does not expose IOPCServer.");
-
-        server_com_object_ = serverObj;
-        server_ = remoteServer;
     }
 
     public Task<IReadOnlyList<BridgeValue>> ReadAsync(
@@ -847,6 +901,12 @@ public sealed class OpcDaClient : IDaClient
     private static extern bool CloseHandle(nint handle);
     private const int CLSCTX_REMOTE_SERVER = 0x10;
     private const int E_ACCESSDENIED = unchecked((int)0x80070005);
+    private const int RPC_C_AUTHN_WINNT = 10;
+    private const int RPC_C_AUTHZ_NONE = 0;
+    private const int RPC_C_AUTHN_LEVEL_CONNECT = 2;
+    private const int RPC_C_AUTHN_LEVEL_PKT_PRIVACY = 6;
+    private const int RPC_C_IMP_LEVEL_IMPERSONATE = 3;
+    private const int EOAC_NONE = 0;
 
     [DllImport("ole32.dll", CharSet = CharSet.Unicode)]
     private static extern int CLSIDFromProgID(string progId, out Guid clsid);
@@ -868,6 +928,29 @@ public sealed class OpcDaClient : IDaClient
         public IntPtr pAuthInfo; // pointer to COAUTHINFO
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct COAUTHINFO
+    {
+        public int dwAuthnSvc;
+        public int dwAuthzSvc;
+        public IntPtr pwszServerPrincipalName;
+        public int dwAuthnLevel;
+        public int dwImpersonationLevel;
+        public IntPtr pAuthIdentityData; // pointer to COAUTHIDENTITY
+        public int dwCapabilities;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct COAUTHIDENTITY
+    {
+        public IntPtr User;
+        public int UserLength;
+        public IntPtr Domain;
+        public int DomainLength;
+        public IntPtr Password;
+        public int PasswordLength;
+        public int Flags; // SEC_WINNT_AUTH_IDENTITY_UNICODE = 2
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MULTI_QI
