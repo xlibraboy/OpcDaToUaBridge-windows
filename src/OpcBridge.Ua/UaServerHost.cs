@@ -43,7 +43,7 @@ public sealed class UaServerHost : IAsyncDisposable
             throw new InvalidOperationException("OPC UA application certificate is invalid.");
         }
 
-        server_ = new BridgeUaServer(mappings);
+        server_ = new BridgeUaServer(mappings, options_);
         await application.StartAsync(server_).ConfigureAwait(false);
         logger_.LogInformation("OPC UA server started at {EndpointUrl}", options_.EndpointUrl);
     }

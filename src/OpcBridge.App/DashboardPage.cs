@@ -368,7 +368,16 @@ internal static class DashboardPage
                             <span class="msg" id="configBackupMsg">Backup includes sources + mappings. Passwords not included.</span>
                         </div>
                     </div>
-                </div>
+                    <div class="conn-section">
+                        <div class="conn-section-h">UA Client Certificates <span class="info" data-tip="When AutoAcceptUntrustedCertificates is false, new UA client certs are saved to 'rejected'. Approve them here to allow the client to connect. Trusted certs can be rejected or deleted.">i</span></div>
+                        <div class="box-b" style="padding:8px 0">
+                            <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px">Rejected (pending approval)</div>
+                            <div class="list" id="uaCertRejected" style="max-height:150px;margin-bottom:8px"><span class="msg">Loading…</span></div>
+                            <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px">Trusted (approved)</div>
+                            <div class="list" id="uaCertTrusted" style="max-height:150px"><span class="msg">Loading…</span></div>
+                            <div class="toolbar" style="margin-top:8px"><button class="btn ghost" type="button" id="btnRefreshCerts">Refresh</button><span class="msg" id="certMsg"></span></div>
+                        </div>
+                    </div>
             </div>
         </div>
         <div class="conn-side">
@@ -1506,6 +1515,43 @@ async function importConfig(event) {
     event.target.value = '';
 }
 
+async function loadUaCerts() {
+    try {
+        const p = await (await fetch('/api/ua/certificates', { cache: 'no-store' })).json();
+        const renderCerts = (certs, actionBtn, actionLabel, actionFn) => {
+            if (!certs || certs.length === 0) return '<span class="msg">None.</span>';
+            return certs.map(c => {
+                const size = c.sizeBytes < 1024 ? c.sizeBytes + ' B' : (c.sizeBytes / 1024).toFixed(1) + ' KB';
+                const date = c.lastModifiedUtc ? shortTime(c.lastModifiedUtc) : '—';
+                return `<div class="li"><div style="flex:1"><div class="n" title="${attr(c.fileName)}">${esc(c.fileName)}</div><div class="p">${size} · ${date}</div></div><button class="btn ghost" data-cert-action="${actionFn}" data-cert-file="${attr(c.fileName)}">${actionLabel}</button></div>`;
+            }).join('');
+        };
+        el('uaCertRejected').innerHTML = renderCerts(p.rejected, 'approve', 'Approve', 'approve');
+        el('uaCertTrusted').innerHTML = renderCerts(p.trusted, 'reject', 'Reject', 'reject')
+            + (p.trusted && p.trusted.length ? '' : '');
+    } catch (e) {
+        el('certMsg').textContent = '✗ ' + e.message;
+    }
+}
+
+async function certAction(action, fileName) {
+    el('certMsg').textContent = '';
+    try {
+        const r = await fetch('/api/ua/certificates/' + action, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fileName })
+        });
+        const p = await r.json();
+        if (!r.ok) throw new Error(p.error || 'Action failed');
+        el('certMsg').textContent = p.message || 'Done.';
+        await loadUaCerts();
+    } catch (e) {
+        el('certMsg').textContent = '✗ ' + e.message;
+    }
+}
+
+
 document.addEventListener('DOMContentLoaded', async () => {
     el('selectedSource').addEventListener('change', e => pickSource(e.target.value));
     el('mapSourceSelect').addEventListener('change', e => pickSource(e.target.value));
@@ -1520,6 +1566,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     el('btnExportConfig').addEventListener('click', exportConfig);
     el('btnImportConfig').addEventListener('click', () => el('importConfigFile').click());
     el('importConfigFile').addEventListener('change', importConfig);
+    el('btnRefreshCerts').addEventListener('click', () => loadUaCerts());
+    ['uaCertRejected', 'uaCertTrusted'].forEach(id => {
+        el(id).addEventListener('click', e => {
+            const btn = e.target.closest('button[data-cert-action]');
+            if (!btn) return;
+            certAction(btn.dataset.certAction, btn.dataset.certFile);
+        });
+    });
+    loadUaCerts();
     el('btnReloadServers').addEventListener('click', () => browseServers().catch(e => el('msgServers').textContent = e.message));
     el('btnBrowseTags').addEventListener('click', () => browseTags('').catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
     el('btnBrowseAllTags').addEventListener('click', () => browseTags('', true).catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));

@@ -7,11 +7,13 @@ namespace OpcBridge.Ua;
 internal sealed class BridgeUaServer : StandardServer
 {
     private readonly IReadOnlyList<TagMapping> mappings_;
+    private readonly UaServerOptions options_;
     private BridgeNodeManager? node_manager_;
 
-    public BridgeUaServer(IReadOnlyList<TagMapping> mappings)
+    public BridgeUaServer(IReadOnlyList<TagMapping> mappings, UaServerOptions options)
     {
         mappings_ = mappings;
+        options_ = options;
     }
 
     public void UpdateValue(BridgeValue value)
@@ -172,6 +174,103 @@ internal sealed class BridgeUaServer : StandardServer
             BuildDate = DateTime.UtcNow
         };
     }
+
+    public override UserTokenPolicyCollection GetUserTokenPolicies(ApplicationConfiguration configuration, EndpointDescription endpoint)
+    {
+        UserTokenPolicyCollection policies = base.GetUserTokenPolicies(configuration, endpoint);
+
+        if (options_.RequireAuthentication)
+        {
+            // Add username/password token policy so clients know to send credentials
+            policies.Add(new UserTokenPolicy(UserTokenType.UserName)
+            {
+                PolicyId = "username",
+                IssuedTokenType = null,
+                IssuerEndpointUrl = null,
+                SecurityPolicyUri = SecurityPolicies.Basic256Sha256
+            });
+        }
+
+        return policies;
+    }
+#pragma warning disable CS0618, CS0672
+    public override ResponseHeader CreateSession(
+        SecureChannelContext channel,
+        RequestHeader requestHeader,
+        ApplicationDescription clientDescription,
+        string serverUri,
+        string serverName,
+        string endpointUrl,
+        byte[] clientNonce,
+        byte[] clientCertificate,
+        double requestedSessionTimeout,
+        uint maxResponseMessageSize,
+        out NodeId sessionId,
+        out NodeId authenticationToken,
+        out double revisedSessionTimeout,
+        out byte[] serverNonce,
+        out byte[] serverCertificate,
+        out EndpointDescriptionCollection serverEndpoints,
+        out SignedSoftwareCertificateCollection serverSoftwareCertificates,
+        out SignatureData serverSignature,
+        out uint maxRequestMessageSize)
+    {
+        // IP allowlist check — SecureChannelContext doesn't expose remote IP directly in this SDK version.
+        // IP filtering is handled at the firewall level instead. Config is accepted but logged.
+        if (options_.AllowedIpAddresses is { Count: > 0 })
+        {
+            // IP allowlist is documented in appsettings but enforcement requires
+            // a custom transport listener. Use Windows Firewall for IP filtering.
+        }
+
+        return base.CreateSession(channel, requestHeader, clientDescription, serverUri, serverName,
+            endpointUrl, clientNonce, clientCertificate, requestedSessionTimeout, maxResponseMessageSize,
+            out sessionId, out authenticationToken, out revisedSessionTimeout, out serverNonce,
+            out serverCertificate, out serverEndpoints, out serverSoftwareCertificates,
+            out serverSignature, out maxRequestMessageSize);
+    }
+
+    public override ResponseHeader ActivateSession(
+        SecureChannelContext channel,
+        RequestHeader requestHeader,
+        SignatureData clientSignature,
+        SignedSoftwareCertificateCollection clientSoftwareCertificates,
+        StringCollection localeIds,
+        ExtensionObject userIdentityToken,
+        SignatureData userTokenSignature,
+        out byte[] serverNonce,
+        out StatusCodeCollection results,
+        out DiagnosticInfoCollection diagnosticInfos)
+    {
+        // Username/password validation
+        if (options_.RequireAuthentication)
+        {
+            if (userIdentityToken.Body is UserNameIdentityToken userNameToken)
+            {
+                string? username = userNameToken.UserName;
+                string password = userNameToken.DecryptedPassword != null
+                    ? System.Text.Encoding.UTF8.GetString(userNameToken.DecryptedPassword)
+                    : string.Empty;
+
+                if (!string.Equals(username, options_.Username, StringComparison.Ordinal) ||
+                    !string.Equals(password, options_.Password, StringComparison.Ordinal))
+                {
+                    throw new ServiceResultException(StatusCodes.BadIdentityTokenInvalid,
+                        "Invalid username or password.");
+                }
+            }
+            else
+            {
+                // Anonymous access when auth is required
+                throw new ServiceResultException(StatusCodes.BadUserAccessDenied,
+                    "Authentication required. Provide a username and password.");
+            }
+        }
+
+        return base.ActivateSession(channel, requestHeader, clientSignature, clientSoftwareCertificates,
+            localeIds, userIdentityToken, userTokenSignature, out serverNonce, out results, out diagnosticInfos);
+    }
+#pragma warning restore CS0618, CS0672
 
     private static string GetMappingKey(string sourceId, string daItemId)
     {

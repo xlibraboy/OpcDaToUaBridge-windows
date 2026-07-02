@@ -436,6 +436,103 @@ app.MapPost("/api/config/import", async (HttpContext context, DaRuntimeSettings 
         return Results.BadRequest(new { error = ex.Message });
     }
 });
+
+app.MapGet("/api/ua/certificates", () =>
+{
+    string pkiRoot = Path.Combine(AppContext.BaseDirectory, "pki");
+    string trustedDir = Path.Combine(pkiRoot, "trusted");
+    string rejectedDir = Path.Combine(pkiRoot, "rejected");
+
+    List<object> ListCerts(string dir)
+    {
+        List<object> result = new();
+        if (!Directory.Exists(dir)) return result;
+        foreach (string file in Directory.GetFiles(dir, "*.der"))
+        {
+            string name = Path.GetFileName(file);
+            FileInfo fi = new(file);
+            result.Add(new { fileName = name, sizeBytes = fi.Length, lastModifiedUtc = fi.LastWriteTimeUtc });
+        }
+        return result;
+    }
+
+    return Results.Json(new
+    {
+        trusted = ListCerts(trustedDir),
+        rejected = ListCerts(rejectedDir)
+    });
+});
+
+app.MapPost("/api/ua/certificates/approve", (HttpContext context) =>
+{
+    string body = new StreamReader(context.Request.Body).ReadToEnd();
+    string? fileName = System.Text.Json.JsonDocument.Parse(body).RootElement.GetProperty("fileName").GetString();
+    if (string.IsNullOrWhiteSpace(fileName) || fileName.Contains("..") || fileName.Contains('/') || fileName.Contains('\\'))
+    {
+        return Results.BadRequest(new { error = "Invalid file name." });
+    }
+
+    string rejectedPath = Path.Combine(AppContext.BaseDirectory, "pki", "rejected", fileName);
+    string trustedPath = Path.Combine(AppContext.BaseDirectory, "pki", "trusted", fileName);
+
+    if (!File.Exists(rejectedPath))
+    {
+        return Results.NotFound(new { error = $"Certificate '{fileName}' not found in rejected folder." });
+    }
+
+    Directory.CreateDirectory(Path.GetDirectoryName(trustedPath)!);
+    File.Move(rejectedPath, trustedPath, overwrite: true);
+    return Results.Json(new { status = "ok", message = $"Certificate '{fileName}' approved and moved to trusted." });
+});
+
+app.MapPost("/api/ua/certificates/reject", (HttpContext context) =>
+{
+    string body = new StreamReader(context.Request.Body).ReadToEnd();
+    string? fileName = System.Text.Json.JsonDocument.Parse(body).RootElement.GetProperty("fileName").GetString();
+    if (string.IsNullOrWhiteSpace(fileName) || fileName.Contains("..") || fileName.Contains('/') || fileName.Contains('\\'))
+    {
+        return Results.BadRequest(new { error = "Invalid file name." });
+    }
+
+    string trustedPath = Path.Combine(AppContext.BaseDirectory, "pki", "trusted", fileName);
+    string rejectedPath = Path.Combine(AppContext.BaseDirectory, "pki", "rejected", fileName);
+
+    if (!File.Exists(trustedPath))
+    {
+        return Results.NotFound(new { error = $"Certificate '{fileName}' not found in trusted folder." });
+    }
+
+    Directory.CreateDirectory(Path.GetDirectoryName(rejectedPath)!);
+    File.Move(trustedPath, rejectedPath, overwrite: true);
+    return Results.Json(new { status = "ok", message = $"Certificate '{fileName}' rejected and moved to rejected." });
+});
+
+app.MapPost("/api/ua/certificates/delete", (HttpContext context) =>
+{
+    string body = new StreamReader(context.Request.Body).ReadToEnd();
+    using System.Text.Json.JsonDocument doc = System.Text.Json.JsonDocument.Parse(body);
+    string? fileName = doc.RootElement.GetProperty("fileName").GetString();
+    string? folder = doc.RootElement.GetProperty("folder").GetString();
+
+    if (string.IsNullOrWhiteSpace(fileName) || fileName.Contains("..") || fileName.Contains('/') || fileName.Contains('\\'))
+    {
+        return Results.BadRequest(new { error = "Invalid file name." });
+    }
+
+    if (folder != "trusted" && folder != "rejected")
+    {
+        return Results.BadRequest(new { error = "Folder must be 'trusted' or 'rejected'." });
+    }
+
+    string path = Path.Combine(AppContext.BaseDirectory, "pki", folder, fileName);
+    if (!File.Exists(path))
+    {
+        return Results.NotFound(new { error = $"Certificate '{fileName}' not found in {folder}." });
+    }
+
+    File.Delete(path);
+    return Results.Json(new { status = "ok", message = $"Certificate '{fileName}' deleted from {folder}." });
+});
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
 await app.RunAsync().ConfigureAwait(false);
