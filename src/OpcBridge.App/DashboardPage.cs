@@ -129,6 +129,12 @@ internal static class DashboardPage
         .modal-close { background: none; border: none; color: var(--muted); font-size: 20px; cursor: pointer; padding: 0 4px; line-height: 1; }
         .modal-close:hover { color: var(--text); }
         .modal-b { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+        .fp-subtabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+        .fp-subtab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); padding: 8px 14px; font-size: 12px; font-weight: 600; cursor: pointer; }
+        .fp-subtab:hover { color: var(--text); }
+        .fp-subtab.active { color: var(--accent); border-bottom-color: var(--accent); }
+        .fp-tabpane { display: flex; flex-direction: column; gap: 10px; }
+        .fp-tabpane .field { margin-bottom: 0; }
         .fp-body { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         .mapping-toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
         @media (max-width: 520px) { .fp-body { grid-template-columns: 1fr; } }
@@ -443,24 +449,32 @@ internal static class DashboardPage
             <button class="modal-close" type="button" onclick="closeFaceplate()">&times;</button>
         </div>
         <div class="modal-b">
-            <div class="fp-body">
-                <div class="fp-panel" id="fpLivePanel"></div>
-                <div class="fp-panel">
-                    <div class="fp-k">Manual override</div>
-                    <input class="fp-input" id="fpManualInput" data-action="tag-manual-value" type="text" disabled>
-                    <div class="fp-hint" id="fpModeHint"></div>
-                </div>
+            <div class="fp-panel" id="fpLivePanel" style="margin-bottom:12px"></div>
+            <div class="fp-subtabs">
+                <button class="fp-subtab active" type="button" data-fptab="basic" onclick="showFpTab('basic')">Basic</button>
+                <button class="fp-subtab" type="button" data-fptab="setup" onclick="showFpTab('setup')">Setup</button>
+                <button class="fp-subtab" type="button" data-fptab="sim" onclick="showFpTab('sim')">Simulation</button>
+            </div>
+            <div class="fp-tabpane" id="fp-pane-basic">
+                <div class="field"><label class="fl">Tag Name</label><input type="text" id="fpDisplayName" style="flex:1"></div>
+                <div class="field"><label class="fl">DA Address</label><input type="text" id="fpDaItemId" readonly style="flex:1;opacity:.72"></div>
+                <div class="field"><label class="fl">UA Node</label><input type="text" id="fpUaNodeId" readonly style="flex:1;opacity:.72"></div>
+                <div class="field"><label class="fl">Description</label><input type="text" id="fpDescription" placeholder="Operator notes / tag description (optional)" style="flex:1"></div>
+            </div>
+            <div class="fp-tabpane" id="fp-pane-setup" style="display:none">
+                <div class="field"><label class="fl">Access Rights</label><select id="fpAccess" data-action="tag-access"><option value="Read">Read (DA → UA)</option><option value="Read-Write">Read-Write (DA ↔ UA)</option><option value="Write">Write (UA → DA)</option></select></div>
+                <div class="field"><label class="fl">Enabled</label><input type="checkbox" id="fpEnabled" data-action="toggle-tag-enabled"></div>
+                <div class="field"><label class="fl">Poll Rate</label><select id="fpPollRate" data-action="tag-poll-rate"><option value="0">Source Default</option><option value="100">100 ms</option><option value="250">250 ms</option><option value="500">500 ms</option><option value="1000">1 s</option><option value="2000">2 s</option><option value="5000">5 s</option><option value="10000">10 s</option></select></div>
+                <div class="field"><label class="fl">Deadband %</label><input type="number" id="fpDeadband" min="0" max="100" step="0.1" value="0" style="width:80px"></div>
+            </div>
+            <div class="fp-tabpane" id="fp-pane-sim" style="display:none">
+                <div class="field"><label class="fl">Manual Value</label><input type="text" id="fpManualInput" data-action="tag-manual-value" disabled style="flex:1"></div>
+                <div class="hint" id="fpModeHint" style="margin-top:4px"></div>
             </div>
         </div>
         <div class="modal-f">
-            <div class="field"><label class="fl" style="width:auto">Enabled</label><input type="checkbox" id="fpEnabled" data-action="toggle-tag-enabled"></div>
-            <div class="field"><label class="fl" style="width:auto">Mode</label><select id="fpMode" data-action="tag-mode"><option value="Source">Source</option><option value="Manual">Manual</option></select></div>
-            <div class="field"><label class="fl" style="width:auto">Poll Rate</label><select id="fpPollRate" data-action="tag-poll-rate"><option value="0">Source Default</option><option value="100">100 ms</option><option value="250">250 ms</option><option value="500">500 ms</option><option value="1000">1 s</option><option value="2000">2 s</option><option value="5000">5 s</option><option value="10000">10 s</option></select></div>
-            <div class="field"><label class="fl" style="width:auto">Deadband %</label><input type="number" id="fpDeadband" min="0" max="100" step="0.1" value="0" style="width:80px"></div>
-            <div class="field" style="flex-basis:100%"><label class="fl" style="width:auto">Description</label><input type="text" id="fpDescription" placeholder="Operator notes / tag description (optional)" style="flex:1"></div>
-            <div class="field"><label class="fl" style="width:auto">Writeable</label><input type="checkbox" id="fpWriteable" data-action="tag-writeable"></div>
-            <button class="btn ghost" type="button" id="fpApply" data-action="save-tag">Apply</button>
             <button class="btn ghost" type="button" id="fpRemove" data-action="remove-mapping">Remove</button>
+            <button class="btn" type="button" id="fpApply" data-action="save-tag">Apply</button>
         </div>
     </div>
 </div>
@@ -585,24 +599,16 @@ function renderMappingRow(mapping) {
     const writeable = (mapping.writeable ?? mapping.Writeable) === true;
     const pollRate = mapping.pollRateMs ?? mapping.PollRateMs ?? 0;
     const deadband = Number(mapping.deadbandPct ?? mapping.DeadbandPct ?? 0);
+    const access = deriveAccess(mode, writeable);
     let accessBadge;
     if (!enabled) { accessBadge = badge('Disabled', 'bad'); }
-    else if (mode === 'Manual') { accessBadge = badge('Write', 'warn'); }
-    else if (writeable) { accessBadge = badge('Read-Write', 'partial'); }
-    else { accessBadge = badge('Read', 'good'); }
+    else { accessBadge = badge(access, access === 'Read' ? 'good' : access === 'Read-Write' ? 'partial' : 'warn'); }
     const rateBadge = pollRate > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">${pollRate}ms</span>` : '';
     const deadbandBadge = deadband > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">db ${deadband}%</span>` : '';
     const desc = (mapping.description || mapping.Description || '').trim();
     const descIcon = desc ? `<span class="li-desc" title="${attr(desc)}" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">&#8505;</span>` : '';
     return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">${descIcon}<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="n">${esc(name)}</span> <span class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</span></div><div class="li-badge">${accessBadge}${deadbandBadge}${rateBadge}</div></div>`;
 }
-
-function renderMappingRows(mappings) {
-    return mappings.length ? mappings.map(renderMappingRow).join('') : '<span class="msg">No DA → OPC UA mappings.</span>';
-}
-
-let faceplateOpen = false;
-let faceplateKey = null;
 
 function openFaceplate(sourceId, itemId) {
     const mapping = getMapping(sourceId, itemId);
@@ -614,20 +620,22 @@ function openFaceplate(sourceId, itemId) {
     const mode = mapping.mode || mapping.Mode || 'Source';
     const enabled = (mapping.enabled ?? mapping.Enabled) !== false;
     const manualValue = mapping.manualValue ?? mapping.ManualValue ?? '';
+    const writeable = (mapping.writeable ?? mapping.Writeable) === true;
+    const access = deriveAccess(mode, writeable);
     el('fpName').textContent = name;
     el('fpSub').textContent = sourceId + ' · ' + itemId + ' · UA: ' + node;
+    el('fpDisplayName').value = name;
+    el('fpDaItemId').value = itemId;
+    el('fpUaNodeId').value = node;
+    el('fpDescription').value = String(mapping.description ?? mapping.Description ?? '');
+    el('fpAccess').value = access;
     el('fpEnabled').checked = enabled;
-    el('fpMode').value = mode;
     el('fpManualInput').value = String(manualValue ?? '');
-    el('fpManualInput').disabled = mode !== 'Manual';
     const pollRate = mapping.pollRateMs ?? mapping.PollRateMs ?? 0;
     el('fpPollRate').value = String(pollRate);
     const deadband = Number(mapping.deadbandPct ?? mapping.DeadbandPct ?? 0);
     el('fpDeadband').value = String(deadband);
-    const writeable = (mapping.writeable ?? mapping.Writeable) === true;
-    el('fpDescription').value = String(mapping.description ?? mapping.Description ?? '');
-    el('fpWriteable').checked = writeable;
-    el('fpModeHint').textContent = 'Mode ' + mode;
+    updateManualInputState();
     el('fpApply').dataset.sourceId = sourceId;
     el('fpApply').dataset.itemId = itemId;
     el('fpRemove').dataset.sourceId = sourceId;
@@ -636,6 +644,15 @@ function openFaceplate(sourceId, itemId) {
     el('fpEnabled').dataset.itemId = itemId;
     el('fpLivePanel').innerHTML = renderLiveValue(currentValue(sourceId, itemId));
     el('faceplateOverlay').classList.add('open');
+}
+function deriveAccess(mode, writeable) {
+    if (mode === 'Manual' && writeable) return 'Write';
+    if (mode === 'Source' && writeable) return 'Read-Write';
+    return 'Read';
+}
+function showFpTab(name) {
+    document.querySelectorAll('.fp-subtab').forEach(b => b.classList.toggle('active', b.dataset.fptab === name));
+    document.querySelectorAll('.fp-tabpane').forEach(p => p.style.display = p.id === 'fp-pane-' + name ? 'flex' : 'none');
 }
 
 function closeFaceplate() {
@@ -651,11 +668,14 @@ function updateFaceplateLiveValues() {
 }
 
 function updateManualInputState() {
-    const modeSelect = el('fpMode');
+    const accessSelect = el('fpAccess');
     const manualInput = el('fpManualInput');
-    if (!modeSelect || !manualInput) return;
-    manualInput.disabled = modeSelect.value !== 'Manual';
-    el('fpModeHint').textContent = 'Mode ' + modeSelect.value;
+    if (!accessSelect || !manualInput) return;
+    const isWrite = accessSelect.value === 'Write';
+    manualInput.disabled = !isWrite;
+    el('fpModeHint').textContent = isWrite
+        ? 'Write mode: UA clients write to DA. Manual value is the initial/seed value published to UA.'
+        : 'Manual value only applies to Write (UA → DA) access.';
 }
 
 function showTab(name) {
@@ -1489,12 +1509,14 @@ function bindDynamicButtons() {
         }
         if (button.dataset.action === 'save-tag') {
             updateMapping(sourceId, itemId, payload => {
-                payload.mode = el('fpMode').value || 'Source';
+                const access = el('fpAccess').value;
+                payload.displayName = el('fpDisplayName').value.trim() || itemId;
                 payload.pollRateMs = Number.parseInt(el('fpPollRate').value, 10) || 0;
                 payload.deadbandPct = Math.max(0, Math.min(100, Number.parseFloat(el('fpDeadband').value) || 0));
-                payload.writeable = el('fpWriteable').checked;
                 payload.description = el('fpDescription').value.trim() || null;
-                if (payload.mode === 'Manual') {
+                if (access === 'Write') {
+                    payload.mode = 'Manual';
+                    payload.writeable = true;
                     const manualField = el('fpManualInput');
                     if (!manualField.value.trim()) {
                         const liveText = el('fpLivePanel')?.querySelector('.fp-v')?.textContent || '';
@@ -1502,7 +1524,13 @@ function bindDynamicButtons() {
                     }
                     payload.manualValue = manualField.value.trim() || '';
                     payload.enabled = true;
+                } else if (access === 'Read-Write') {
+                    payload.mode = 'Source';
+                    payload.writeable = true;
+                    payload.manualValue = null;
                 } else {
+                    payload.mode = 'Source';
+                    payload.writeable = false;
                     payload.manualValue = null;
                 }
             }).then(() => {
@@ -1517,11 +1545,11 @@ function bindDynamicButtons() {
         if (target.id === 'fpEnabled') {
             updateMapping(target.dataset.sourceId || '', target.dataset.itemId || '', payload => {
                 payload.enabled = target.checked;
-                if (!target.checked) { payload.mode = 'Source'; payload.manualValue = null; }
+                if (!target.checked) { payload.mode = 'Source'; payload.manualValue = null; payload.writeable = false; }
             }).then(() => openFaceplate(target.dataset.sourceId || '', target.dataset.itemId || '')).catch(e => alert('Update failed: ' + e.message));
             return;
         }
-        if (target.id === 'fpMode') {
+        if (target.id === 'fpAccess') {
             updateManualInputState();
         }
     });
