@@ -560,14 +560,17 @@ function renderMappingRow(mapping) {
     const node = mapping.uaNodeId || mapping.UaNodeId || defaultUaNodeId(sourceId, item);
     const mode = mapping.mode || mapping.Mode || 'Source';
     const enabled = (mapping.enabled ?? mapping.Enabled) !== false;
-    const modeBadge = mode === 'Manual' ? badge('Manual', 'warn') : (enabled ? badge('Source', 'good') : badge('Disabled', 'bad'));
-    const pollRate = mapping.pollRateMs ?? mapping.PollRateMs ?? 0;
-    const rateBadge = pollRate > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">${pollRate}ms</span>` : '';
-    const deadband = Number(mapping.deadbandPct ?? mapping.DeadbandPct ?? 0);
-    const deadbandBadge = deadband > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">db ${deadband}%</span>` : '';
     const writeable = (mapping.writeable ?? mapping.Writeable) === true;
-    const writeableBadge = writeable ? badge('RW', 'partial') : '';
-    return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}"><div style="flex:1"><div class="n">${esc(name)}</div><div class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</div></div><div class="li-badge">${deadbandBadge}${rateBadge}${writeableBadge}${modeBadge}</div></div>`;
+    const pollRate = mapping.pollRateMs ?? mapping.PollRateMs ?? 0;
+    const deadband = Number(mapping.deadbandPct ?? mapping.DeadbandPct ?? 0);
+    let accessBadge;
+    if (!enabled) { accessBadge = badge('Disabled', 'bad'); }
+    else if (mode === 'Manual') { accessBadge = badge('Write', 'warn'); }
+    else if (writeable) { accessBadge = badge('Read-Write', 'partial'); }
+    else { accessBadge = badge('Read', 'good'); }
+    const rateBadge = pollRate > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">${pollRate}ms</span>` : '';
+    const deadbandBadge = deadband > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">db ${deadband}%</span>` : '';
+    return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}"><div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="n">${esc(name)}</span> <span class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</span></div><div class="li-badge">${accessBadge}${deadbandBadge}${rateBadge}</div></div>`;
 }
 
 function renderMappingRows(mappings) {
