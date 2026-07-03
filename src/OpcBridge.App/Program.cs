@@ -106,6 +106,7 @@ app.MapGet("/api/da/sources", (DaRuntimeSettings settings) =>
     return Results.Json(new
     {
         updateRateMs = snapshot.UpdateRateMs,
+        useSubscriptions = snapshot.UseSubscriptions,
         sources = snapshot.Sources.Select(source => new
         {
             sourceId = source.SourceId,
@@ -130,6 +131,15 @@ app.MapPost("/api/da/update-rate", (DaUpdateRateRequest request, DaRuntimeSettin
     {
         version = snapshot.Version,
         updateRateMs = snapshot.UpdateRateMs
+    });
+});
+app.MapPost("/api/da/use-subscriptions", (DaUseSubscriptionsRequest request, DaRuntimeSettings settings) =>
+{
+    DaRuntimeSettingsSnapshot snapshot = settings.SetUseSubscriptions(request.UseSubscriptions);
+    return Results.Json(new
+    {
+        version = snapshot.Version,
+        useSubscriptions = snapshot.UseSubscriptions
     });
 });
 app.MapPost("/api/da/sources/update-rate", (DaSourceUpdateRateRequest request, DaRuntimeSettings settings) =>
@@ -362,6 +372,7 @@ app.MapGet("/api/config/export", (DaRuntimeSettings daSettings, MappingStore map
         daSources = new
         {
             updateRateMs = daSnapshot.UpdateRateMs,
+            useSubscriptions = daSnapshot.UseSubscriptions,
             sources = daSnapshot.Sources.Select(s => new
             {
                 sourceId = s.SourceId,
@@ -406,7 +417,8 @@ app.MapPost("/api/config/import", async (HttpContext context, DaRuntimeSettings 
                 }
             }
 
-            daSettings.RestoreFromSnapshot(new DaRuntimeSettingsSnapshot(updateRate, sources, 0));
+            bool useSubs = daSourcesEl.TryGetProperty("useSubscriptions", out JsonElement usEl) && usEl.GetBoolean();
+            daSettings.RestoreFromSnapshot(new DaRuntimeSettingsSnapshot(updateRate, useSubs, sources, 0));
         }
 
         // Restore mappings

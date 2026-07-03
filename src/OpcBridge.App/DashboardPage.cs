@@ -361,6 +361,10 @@ internal static class DashboardPage
                         <div class="conn-section-h">Default Poll Rate <span class="info" data-tip="Fallback rate for tags set to 'Source Default' (Tags tab → faceplate → Poll Rate).">i</span></div>
                         <div class="field"><label class="fl">Rate</label><select id="cfgUpdateRate"><option value="100">100 ms</option><option value="250">250 ms</option><option value="500">500 ms</option><option value="1000">1 s</option><option value="2000">2 s</option><option value="5000">5 s</option><option value="10000">10 s</option></select><button class="btn ghost" id="cfgApplyRate" type="button">Apply</button><span class="msg" id="rateMessage">Applies live</span></div>
                     </div>
+                    <div class="conn-section">
+                        <div class="conn-section-h">DA Subscriptions <span class="info" data-tip="When ON, the bridge uses IOPCDataCallback to receive value changes from the DA server (faster, supports deadband). When OFF, the bridge polls with IOPCSyncIO.Read. Changing this requires a source reconnect.">i</span></div>
+                        <div class="field"><label class="fl">Subscriptions</label><input type="checkbox" id="cfgUseSubscriptions" checked><span class="msg" id="subMessage">Applies on reconnect</span></div>
+                    </div>
                     <div class="toolbar" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
                         <button class="btn" id="cfgApply" type="button" style="display:none">Save</button>
                         <button class="btn ghost" id="cfgReset" type="button" style="display:none">Reset</button>
@@ -563,6 +567,7 @@ const state = {
     liveValuesEnabled: true,
     lastValueCount: 0,
     updateRateMs: 1000,
+    useSubscriptions: true,
     logsLoaded: false,
     appInfoLoaded: false,
     mappings: [],
@@ -765,6 +770,8 @@ async function loadSources() {
     const payload = await (await fetch('/api/da/sources', { cache: 'no-store' })).json();
     state.sources = payload.sources || [];
     state.updateRateMs = Number(payload.updateRateMs || state.updateRateMs || 1000);
+    state.useSubscriptions = payload.useSubscriptions !== false;
+    el('cfgUseSubscriptions').checked = state.useSubscriptions;
     if (document.activeElement !== el('cfgUpdateRate')) el('cfgUpdateRate').value = String(state.updateRateMs);
     renderSources();
 }
@@ -1581,6 +1588,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         el(id).addEventListener('input', () => { if (!state.editingNewSource) showSaveReset(); });
     });
     el('cfgApplyRate').addEventListener('click', () => saveUpdateRate().catch(e => el('rateMessage').textContent = '✗ ' + e.message));
+    el('cfgUseSubscriptions').addEventListener('change', async e => {
+        try {
+            const r = await fetch('/api/da/use-subscriptions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ useSubscriptions: e.target.checked })
+            });
+            const p = await r.json();
+            if (!r.ok) throw new Error(p.error || ('HTTP ' + r.status));
+            state.useSubscriptions = p.useSubscriptions;
+            el('cfgUseSubscriptions').checked = state.useSubscriptions;
+            el('subMessage').textContent = state.useSubscriptions ? 'ON — applies on next reconnect' : 'OFF — polling mode, applies on next reconnect';
+            await refresh();
+        } catch (err) {
+            el('subMessage').textContent = '✗ ' + err.message;
+            el('cfgUseSubscriptions').checked = state.useSubscriptions;
+        }
+    });
     el('btnReloadServers').addEventListener('click', () => browseServers().catch(e => el('msgServers').textContent = e.message));
     el('btnBrowseTags').addEventListener('click', () => browseTags('').catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
     el('btnBrowseAllTags').addEventListener('click', () => browseTags('', true).catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));

@@ -28,6 +28,7 @@ public sealed class DaRuntimeSettings
         {
             snapshot_ = new DaRuntimeSettingsSnapshot(
                 NormalizeUpdateRate(options.Value.UpdateRateMs),
+                options.Value.UseSubscriptions,
                 BuildInitialSources(options.Value),
                 0);
         }
@@ -148,6 +149,20 @@ public sealed class DaRuntimeSettings
         }
     }
 
+    public DaRuntimeSettingsSnapshot SetUseSubscriptions(bool enabled)
+    {
+        lock (sync_)
+        {
+            snapshot_ = snapshot_ with
+            {
+                UseSubscriptions = enabled,
+                Version = snapshot_.Version + 1
+            };
+            Persist();
+            return snapshot_;
+        }
+    }
+
 
     public DaRuntimeSettingsSnapshot SetServerConfig(
         string progId,
@@ -251,7 +266,6 @@ public sealed class DaRuntimeSettings
 
         return Math.Max(100, updateRateMs);
     }
-
     private void Persist()
     {
         try
@@ -261,6 +275,7 @@ public sealed class DaRuntimeSettings
                 var dto = new SourcesConfigDto
                 {
                     UpdateRateMs = snapshot_.UpdateRateMs,
+                    UseSubscriptions = snapshot_.UseSubscriptions,
                     Sources = snapshot_.Sources
                         .Select(s => new SourceConfigDto
                         {
@@ -307,7 +322,7 @@ public sealed class DaRuntimeSettings
 
             if (sources.Count == 0) return null;
 
-            return new DaRuntimeSettingsSnapshot(dto.UpdateRateMs, sources, 0);
+            return new DaRuntimeSettingsSnapshot(dto.UpdateRateMs, dto.UseSubscriptions, sources, 0);
         }
         catch
         {
@@ -328,6 +343,7 @@ public sealed class DaRuntimeSettings
 
 public sealed record DaRuntimeSettingsSnapshot(
     int UpdateRateMs,
+    bool UseSubscriptions,
     IReadOnlyList<DaSourceRuntimeSettings> Sources,
     long Version)
 {
@@ -352,7 +368,7 @@ public sealed record DaSourceRuntimeSettings(
     string? RemoteDomain,
     int UpdateRateMs)
 {
-    public DaClientOptions ToOptions()
+    public DaClientOptions ToOptions(bool useSubscriptions)
     {
         return new DaClientOptions
         {
@@ -361,6 +377,7 @@ public sealed record DaSourceRuntimeSettings(
             ProgId = ProgId,
             Host = Host,
             UpdateRateMs = UpdateRateMs,
+            UseSubscriptions = useSubscriptions,
             RemoteUsername = RemoteUsername,
             RemotePassword = RemotePassword,
             RemoteDomain = RemoteDomain
@@ -371,6 +388,7 @@ public sealed record DaSourceRuntimeSettings(
 internal sealed class SourcesConfigDto
 {
     public int UpdateRateMs { get; set; } = 1000;
+    public bool UseSubscriptions { get; set; } = true;
     public List<SourceConfigDto> Sources { get; set; } = new();
 }
 
