@@ -5,8 +5,8 @@ internal static class HelpContent
     public const string Markdown = """
 # Basic Workflow
 
-- Use **Connection** to configure server connections (OPC DA address, credentials, default poll rate).
-- Use **Tags** to browse DA items, create DA → OPC UA mappings, set per-tag poll rates, deadband, and writeable flag.
+- Use **Connection** to configure server connections (OPC DA address, credentials, default update rate, and DA subscriptions toggle).
+- Use **Tags** to browse DA items, create DA → OPC UA mappings, and set per-tag Access Rights, Update Rate, Deadband, Description, and Simulation.
 - Use **Monitor** to confirm source reads, live values, rate-group alarms, OPC UA writes, and resource telemetry.
 - Use **Logs** to review warnings and errors from the bridge and UA server.
 ---
@@ -72,9 +72,8 @@ internal static class HelpContent
   │                      Web Dashboard (port 8080)                       │
   │                                                                      │
   │  Monitor ──► stats, source status, alarm bar, live values table      │
-  │  Connection ──► server connection config, server discovery, default rate  │
-  │  Tags ──► DA browser, mappings, faceplate (per-tag rate/mode)        │
-  │  Logs ──► recent warnings and errors                                 │
+│  Connection ──► server connection config, discovery, default rate, subscriptions toggle  │
+│  Tags ──► DA browser, mappings, faceplate (access rights, update rate, simulation)  │
   │  Help ──► this page                                                  │
   │                                                                      │
   │  HTTP API: /api/dashboard, /api/mappings, /api/da/sources, etc.      │
@@ -153,15 +152,14 @@ Each UA node simply reflects whatever value the DA-side poller last read. The cl
 ---
 
 
-# Poll Rate & Tag Limits
+# Update Rate & Tag Limits
 
-- Each tag can be assigned its own poll rate via the faceplate (Tags tab → click a tag). Tags with the same rate share one OPC DA group.
-- Tags set to "Source Default" (poll rate = 0) inherit the global **Default Rate** (Connection tab).
-- The global Default Rate is the single fallback for all tags without an explicit rate.
+- Each tag can be assigned its own update rate via the faceplate (Tags tab → click a tag → Setup tab). Tags with the same rate share one OPC DA group.
+- Tags set to "Source Default" (update rate = 0) inherit the global **Default Update Rate** (Connection tab).
+- The global Default Update Rate is the single fallback for all tags without an explicit rate.
 - Watch the alarm bar on the Monitor tab: <span class="good">green</span> = within limits, <span class="warn">yellow</span> = cycle budget warning, <span class="bad">red</span> = limit exceeded or saturated.
 
 *(appsettings.json → `Bridge:RateLimits`)*
-
 | Rate | Max Tags | Basis |
 |------|----------|-------|
 | 100 ms | 200 | COM device read ~0.4ms/item; 80ms budget at 80% cycle |
@@ -181,12 +179,41 @@ Each UA node simply reflects whatever value the DA-side poller last read. The cl
 
 ---
 
-# Manual Override & Tag Modes
 
-- **Source mode** — the tag publishes the live value read from the DA server (default).
-- **Manual mode** — the tag publishes a fixed value you set, overriding the DA read. Switching to Manual with an empty field auto-copies the current live value.
-- **Disabled** — the tag is not published to OPC UA and not read from DA.
-- Open a tag's faceplate (Tags tab → click a tag) to change mode, set manual value, or adjust poll rate.
+# Access Rights & Simulation
+
+Each tag has two independent settings: **Access Rights** (data flow direction) and **Simulation** (manual value injection).
+
+## Access Rights
+
+Set via the faceplate → **Setup** tab:
+
+| Access Right | Data Flow | Description |
+|---|---|---|
+| **Read** | DA → UA | Bridge reads from the DA server and publishes to UA. UA clients can only observe. |
+| **Read-Write** | DA ↔ UA | Bridge reads from DA AND UA client writes flow back to DA via `IOPCSyncIO.Write`. |
+| **Write** | UA → DA | UA clients write values that the bridge pushes to DA. No DA polling, no UA publishing. UA node is write-only (`AccessLevel = CurrentWrite`). |
+
+## Simulation
+
+Set via the faceplate → **Simulation** tab. Independent of Access Rights:
+
+- **OFF** (default) — the tag reads from DA (for Read/Read-Write) or accepts UA writes (for Write).
+- **ON** — the bridge publishes a fixed **Manual Value** to UA instead of reading from DA. Use this to inject test values or simulate a DA source.
+
+| Access Rights | Simulation | Behavior |
+|---|---|---|
+| Read | OFF | Poll DA → publish to UA |
+| Read | ON | Publish Manual Value to UA (no DA read) |
+| Read-Write | OFF | Poll DA → publish + accept UA→DA writes |
+| Read-Write | ON | Publish Manual Value + accept UA→DA writes |
+| Write | OFF | No DA poll, no UA publish, accept UA→DA writes |
+| Write | ON | Publish Manual Value + accept UA→DA writes |
+
+## Disabled Tags
+
+- A tag can be **Disabled** (Setup tab → Enabled checkbox). Disabled tags are not read from DA and not published to UA.
+- Open a tag's faceplate (Tags tab → click a tag) to change access rights, simulation, update rate, or description.
 
 ---
 
@@ -195,17 +222,17 @@ Each UA node simply reflects whatever value the DA-side poller last read. The cl
 - The bridge runs a built-in OPC UA server. UA clients connect to the endpoint shown on the Monitor tab.
 - Each DA tag mapping creates one UA variable node under the "OPC DA Tags" folder (namespace index 2).
 - Node IDs follow the pattern `ns=2;s={sourceId}/{daItemId}` unless a custom UA Node ID is specified.
-- The UA server supports read, subscription (monitored items), and **writes** for mappings marked **Writeable**.
+- The UA server supports read, subscription (monitored items), and **writes** for tags with Read-Write or Write access rights.
 
 ## UA Writes (UA → DA passthrough)
 
-When a mapping has **Writeable** enabled (Tags tab → faceplate → Writeable checkbox):
+When a tag's Access Rights is **Read-Write** or **Write**:
 
 - The UA variable's `AccessLevel` includes `CurrentWrite`, so UA clients can write to it.
 - A write from any UA client drains through a bounded queue (capacity 1024) to `IOPCSyncIO.Write` on the DA server.
 - One consumer per DA source keeps all COM write work on that source's dedicated STA thread.
 - If the write succeeds, the UA value is accepted; on failure the UA write is rejected with `BadNoCommunication` or `BadRequestTimeout` (5s).
-- Non-writeable mappings remain read-only (`AccessLevel = CurrentRead` only).
+- **Read** access rights remain read-only (`AccessLevel = CurrentRead` only).
 
 ```
   UA Client writes value ─► BridgeNodeManager.OnWriteValue
@@ -225,9 +252,9 @@ When a mapping has **Writeable** enabled (Tags tab → faceplate → Writeable c
 
 ## Subscriptions & Deadband
 
-- When **Da:UseSubscriptions** is `true` (default), the bridge subscribes to DA value changes via `IOPCDataCallback` instead of polling with `IOPCSyncIO.Read`.
-- Subscriptions deliver values on change (faster than poll rate) and respect the per-group **deadband**.
-- **Deadband %** (Tags tab → faceplate → Deadband %) sets the OPC DA group's `percentDeadband`. The DA server suppresses callbacks for changes within the deadband. Set 0 for no filtering, 1.0 for 1% noise suppression.
+- Subscriptions can be toggled in **Connection tab → DA Subscriptions**. When ON (default), the bridge uses `IOPCDataCallback` to receive value changes from the DA server instead of polling with `IOPCSyncIO.Read`. Changing the toggle takes effect on the next source reconnect.
+- Subscriptions deliver values on change (faster than update rate) and respect the per-group **deadband**.
+- **Deadband %** (Tags tab → faceplate → Setup tab → Deadband %) sets the OPC DA group's `percentDeadband`. The DA server suppresses callbacks for changes within the deadband. Set 0 for no filtering, 1.0 for 1% noise suppression.
 - If the DA server does not support `IOPCDataCallback`, the bridge logs a warning and falls back to device-read polling — deadband has no effect in polling mode.
 - All COM work for a source (reads, writes, subscription callbacks) is pinned to a dedicated **STA thread** per source to avoid COM apartment marshalling failures.
 
@@ -312,13 +339,13 @@ The bridge can discover OPC DA servers installed on the **local machine** or on 
 
 - **DA browse fails** — check ProgID, host reachability, DCOM permissions, and credentials (Connection tab → Credentials section).
 - **Values stop moving** — check Monitor → Source Status for connection state and last read timing. Check the alarm bar for rate-group saturation.
-- **Tags not appearing in UA** — verify the tag is Enabled and in Source mode (Tags tab → faceplate). Check Monitor → OPC UA Endpoint for node count.
-- **Rate group saturated** — the read time exceeds 80% of the poll rate. Increase the rate or reduce the number of tags in that rate group.
+- **Tags not appearing in UA** — verify the tag is Enabled (Tags tab → faceplate → Setup tab). Check Monitor → OPC UA Endpoint for node count.
+- **Rate group saturated** — the read time exceeds 80% of the update rate. Increase the rate or reduce the number of tags in that rate group.
 - **Tag limit exceeded** — the number of tags in a rate group exceeds the configured limit. Move some tags to a slower rate or increase the limit in `appsettings.json`.
-- **UA write rejected** — verify the mapping has **Writeable** enabled (Tags tab → faceplate). Non-writeable tags return `BadWriteNotSupported`. A write that times out (DA server unresponsive for 5s) returns `BadRequestTimeout`; a DA-side failure returns `BadNoCommunication`.
-- **Deadband not filtering** — deadband only works under **subscriptions** (`Da:UseSubscriptions=true`). If the DA server doesn't support `IOPCDataCallback`, the bridge falls back to polling and deadband has no effect. Check Logs for the subscription fallback warning.
+- **UA write rejected** — verify the tag's Access Rights is **Read-Write** or **Write** (Tags tab → faceplate → Setup tab). Read-only tags return `BadWriteNotSupported`. A write that times out (DA server unresponsive for 5s) returns `BadRequestTimeout`; a DA-side failure returns `BadNoCommunication`.
+- **Deadband not filtering** — deadband only works under **subscriptions** (Connection tab → DA Subscriptions ON). If the DA server doesn't support `IOPCDataCallback`, the bridge falls back to polling and deadband has no effect. Check Logs for the subscription fallback warning.
 - **Handle count growing** — a steady upward trend in Monitor → Resources → Handles indicates a COM object or handle leak. Restart the scheduled task if it grows unbounded; report the source for investigation.
-- **Subscription fallback** — if `/api/logs` shows "OPC DA server does not support subscriptions", the bridge silently switched to polling. Values still flow at the poll rate. This is non-fatal.
+- **Subscription fallback** — if `/api/logs` shows "OPC DA server does not support subscriptions", the bridge silently switched to polling. Values still flow at the update rate. This is non-fatal.
 
 ---
 
@@ -655,8 +682,8 @@ Always preserve `pki/` across updates. It's listed in the update guide as "never
 
 - **Da:ProgId** — OPC DA server ProgID (e.g. `Matrikon.OPC.Simulation.1`)
 - **Da:Host** — DA server host (localhost or remote IP)
-- **Da:UpdateRateMs** — default poll rate for new sources (min 100ms)
-- **Da:UseSubscriptions** — subscribe to DA value changes via `IOPCDataCallback` instead of polling (default `true`; falls back to polling if unsupported)
+- **Da:UpdateRateMs** — default update rate for new sources (min 100ms); can be changed live in Connection tab → Default Update Rate
+- **Da:UseSubscriptions** — use `IOPCDataCallback` subscriptions (default `true`); can be toggled live in Connection tab → DA Subscriptions
 - **Ua:EndpointUrl** — OPC UA server endpoint (default `opc.tcp://0.0.0.0:4840/OpcDaToUaBridge`)
 - **Ua:AutoAcceptUntrustedCertificates** — accept untrusted UA client certs (dev/test)
 - **Bridge:RateLimits** — max tags per rate group (rate ms → max tags)
@@ -671,12 +698,14 @@ Always preserve `pki/` across updates. It's listed in the update guide as "never
 | `daItemId` | *(required)* | OPC DA item ID |
 | `uaNodeId` | auto | UA node ID (default `ns=2;s={sourceId}/{daItemId}`) |
 | `displayName` | = daItemId | Label shown in UA and dashboard |
+| `description` | `null` | Operator-entered notes/description (shown as tooltip in tag list) |
 | `dataType` | `Double` | Data type hint for UA node |
 | `enabled` | `true` | Include in DA reads and UA publishing |
-| `mode` | `Source` | `Source` (live DA value) or `Manual` (fixed override) |
-| `manualValue` | `null` | Fixed value when mode is `Manual` |
-| `pollRateMs` | `0` | Per-tag poll rate (0 = source default) |
+| `accessRights` | `Read` | `Read` (DA→UA), `Read-Write` (DA↔UA), or `Write` (UA→DA only) |
+| `mode` | `Source` | `Source` (live DA value) or `Manual` (simulation — publishes ManualValue) |
+| `manualValue` | `null` | Fixed value when mode is `Manual` (simulation) |
+| `pollRateMs` | `0` | Per-tag update rate in ms (0 = source default) |
 | `deadbandPct` | `0` | Deadband % for subscription filtering (0–100; 0 = no filter) |
-| `writeable` | `false` | Allow UA client writes to propagate to DA via `IOPCSyncIO.Write` |
+| `writeable` | `false` | Derived from accessRights — true for Read-Write and Write |
 """;
 }
