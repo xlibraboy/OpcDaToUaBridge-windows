@@ -358,7 +358,7 @@ internal static class DashboardPage
                         <div class="field"><label class="fl">User</label><input id="cfgUser" type="text" placeholder="username" style="flex:1"><input id="cfgPass" type="password" placeholder="password" style="flex:1"><input id="cfgDomain" type="text" placeholder="domain" style="flex:1"></div>
                     </div>
                     <div class="conn-section">
-                        <div class="conn-section-h">Default Poll Rate <span class="info" data-tip="Fallback rate for tags set to 'Source Default' (Tags tab → faceplate → Poll Rate).">i</span></div>
+                        <div class="conn-section-h">Default Update Rate <span class="info" data-tip="Fallback update rate for tags set to 'Source Default' (Tags tab → faceplate → Update Rate). Tags with a specific rate override this.">i</span></div>
                         <div class="field"><label class="fl">Rate</label><select id="cfgUpdateRate"><option value="100">100 ms</option><option value="250">250 ms</option><option value="500">500 ms</option><option value="1000">1 s</option><option value="2000">2 s</option><option value="5000">5 s</option><option value="10000">10 s</option></select><button class="btn ghost" id="cfgApplyRate" type="button">Apply</button><span class="msg" id="rateMessage">Applies live</span></div>
                     </div>
                     <div class="conn-section">
