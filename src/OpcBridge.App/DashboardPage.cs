@@ -619,6 +619,7 @@ function openFaceplate(sourceId, itemId) {
     faceplateKey = valueKey(sourceId, itemId);
     const name = mapping.displayName || mapping.DisplayName || itemId;
     const node = mapping.uaNodeId || mapping.UaNodeId || defaultUaNodeId(sourceId, itemId);
+    const mode = mapping.mode || mapping.Mode || 'Source';
     const access = mapping.accessRights || mapping.AccessRights || 'Read';
     const simulated = (mode === 'Manual');
     const enabled = (mapping.enabled ?? mapping.Enabled) !== false;
