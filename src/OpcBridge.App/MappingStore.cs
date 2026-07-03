@@ -174,6 +174,15 @@ public sealed class MappingStore
         string itemId = tag.DaItemId?.Trim() ?? string.Empty;
         string defaultNodeId = itemId.Length == 0 ? string.Empty : $"ns=2;s={sourceId}/{itemId}";
 
+        string accessRights = NormalizeAccessRights(tag.AccessRights, tag.Mode, tag.Writeable);
+        bool writeable = accessRights is TagAccessRights.ReadWrite or TagAccessRights.Write;
+        string mode = NormalizeMode(tag.Mode);
+        // Migration: legacy Write-mode-with-writeable maps to AccessRights=Write + Mode=Source
+        if (accessRights == TagAccessRights.Write && mode == TagMode.Manual)
+        {
+            mode = TagMode.Source;
+        }
+
         return new TagMapping
         {
             SourceId = sourceId,
@@ -183,11 +192,12 @@ public sealed class MappingStore
             Description = string.IsNullOrWhiteSpace(tag.Description) ? null : tag.Description.Trim(),
             DataType = string.IsNullOrWhiteSpace(tag.DataType) ? "Auto" : tag.DataType.Trim(),
             Enabled = tag.Enabled,
-            Mode = NormalizeMode(tag.Mode),
+            Mode = mode,
             ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue.Trim(),
             PollRateMs = Math.Max(0, tag.PollRateMs),
             DeadbandPct = Math.Clamp(tag.DeadbandPct, 0f, 100f),
-            Writeable = tag.Writeable
+            Writeable = writeable,
+            AccessRights = accessRights
         };
     }
 
@@ -202,6 +212,23 @@ public sealed class MappingStore
         return string.Equals(mode?.Trim(), TagMode.Manual, StringComparison.OrdinalIgnoreCase)
             ? TagMode.Manual
             : TagMode.Source;
+    }
+
+    private static string NormalizeAccessRights(string? accessRights, string mode, bool writeable)
+    {
+        string value = accessRights?.Trim() ?? string.Empty;
+        if (string.Equals(value, TagAccessRights.ReadWrite, StringComparison.OrdinalIgnoreCase))
+            return TagAccessRights.ReadWrite;
+        if (string.Equals(value, TagAccessRights.Write, StringComparison.OrdinalIgnoreCase))
+            return TagAccessRights.Write;
+        if (string.Equals(value, TagAccessRights.Read, StringComparison.OrdinalIgnoreCase))
+            return TagAccessRights.Read;
+        // Migration from legacy Mode+Writeable when AccessRights is absent
+        if (string.Equals(mode, TagMode.Manual, StringComparison.OrdinalIgnoreCase) && writeable)
+            return TagAccessRights.Write;
+        if (writeable)
+            return TagAccessRights.ReadWrite;
+        return TagAccessRights.Read;
     }
 
 

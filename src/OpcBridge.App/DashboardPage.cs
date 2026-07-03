@@ -468,6 +468,7 @@ internal static class DashboardPage
                 <div class="field"><label class="fl">Deadband %</label><input type="number" id="fpDeadband" min="0" max="100" step="0.1" value="0" style="width:80px"></div>
             </div>
             <div class="fp-tabpane" id="fp-pane-sim" style="display:none">
+                <div class="field"><label class="fl">Simulated</label><input type="checkbox" id="fpSimulated" data-action="tag-simulated"></div>
                 <div class="field"><label class="fl">Manual Value</label><input type="text" id="fpManualInput" data-action="tag-manual-value" disabled style="flex:1"></div>
                 <div class="hint" id="fpModeHint" style="margin-top:4px"></div>
             </div>
@@ -599,10 +600,11 @@ function renderMappingRow(mapping) {
     const writeable = (mapping.writeable ?? mapping.Writeable) === true;
     const pollRate = mapping.pollRateMs ?? mapping.PollRateMs ?? 0;
     const deadband = Number(mapping.deadbandPct ?? mapping.DeadbandPct ?? 0);
-    const access = deriveAccess(mode, writeable);
+    const access = deriveAccess(mapping);
+    const simulated = (mode === 'Manual');
     let accessBadge;
     if (!enabled) { accessBadge = badge('Disabled', 'bad'); }
-    else { accessBadge = badge(access, access === 'Read' ? 'good' : access === 'Read-Write' ? 'partial' : 'warn'); }
+    else { accessBadge = badge(access + (simulated && access !== 'Write' ? ' / Sim' : ''), access === 'Read' ? 'good' : access === 'Read-Write' ? 'partial' : 'warn'); }
     const rateBadge = pollRate > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">${pollRate}ms</span>` : '';
     const deadbandBadge = deadband > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">db ${deadband}%</span>` : '';
     const desc = (mapping.description || mapping.Description || '').trim();
@@ -617,11 +619,10 @@ function openFaceplate(sourceId, itemId) {
     faceplateKey = valueKey(sourceId, itemId);
     const name = mapping.displayName || mapping.DisplayName || itemId;
     const node = mapping.uaNodeId || mapping.UaNodeId || defaultUaNodeId(sourceId, itemId);
-    const mode = mapping.mode || mapping.Mode || 'Source';
+    const access = mapping.accessRights || mapping.AccessRights || 'Read';
+    const simulated = (mode === 'Manual');
     const enabled = (mapping.enabled ?? mapping.Enabled) !== false;
     const manualValue = mapping.manualValue ?? mapping.ManualValue ?? '';
-    const writeable = (mapping.writeable ?? mapping.Writeable) === true;
-    const access = deriveAccess(mode, writeable);
     el('fpName').textContent = name;
     el('fpSub').textContent = sourceId + ' · ' + itemId + ' · UA: ' + node;
     el('fpDisplayName').value = name;
@@ -630,6 +631,7 @@ function openFaceplate(sourceId, itemId) {
     el('fpDescription').value = String(mapping.description ?? mapping.Description ?? '');
     el('fpAccess').value = access;
     el('fpEnabled').checked = enabled;
+    el('fpSimulated').checked = simulated;
     el('fpManualInput').value = String(manualValue ?? '');
     const pollRate = mapping.pollRateMs ?? mapping.PollRateMs ?? 0;
     el('fpPollRate').value = String(pollRate);
@@ -645,9 +647,14 @@ function openFaceplate(sourceId, itemId) {
     el('fpLivePanel').innerHTML = renderLiveValue(currentValue(sourceId, itemId));
     el('faceplateOverlay').classList.add('open');
 }
-function deriveAccess(mode, writeable) {
+function deriveAccess(mapping) {
+    const access = mapping.accessRights || mapping.AccessRights;
+    if (access) return access;
+    // Legacy fallback
+    const mode = mapping.mode || mapping.Mode || 'Source';
+    const writeable = (mapping.writeable ?? mapping.Writeable) === true;
     if (mode === 'Manual' && writeable) return 'Write';
-    if (mode === 'Source' && writeable) return 'Read-Write';
+    if (writeable) return 'Read-Write';
     return 'Read';
 }
 function showFpTab(name) {
@@ -668,14 +675,13 @@ function updateFaceplateLiveValues() {
 }
 
 function updateManualInputState() {
-    const accessSelect = el('fpAccess');
+    const simCheck = el('fpSimulated');
     const manualInput = el('fpManualInput');
-    if (!accessSelect || !manualInput) return;
-    const isWrite = accessSelect.value === 'Write';
-    manualInput.disabled = !isWrite;
-    el('fpModeHint').textContent = isWrite
-        ? 'Write mode: UA clients write to DA. Manual value is the initial/seed value published to UA.'
-        : 'Manual value only applies to Write (UA → DA) access.';
+    if (!simCheck || !manualInput) return;
+    manualInput.disabled = !simCheck.checked;
+    el('fpModeHint').textContent = simCheck.checked
+        ? 'Simulation ON: bridge publishes the Manual Value to UA instead of reading from DA.'
+        : 'Simulation OFF: bridge reads from DA (for Read/Read-Write). Toggle to inject a fixed value.';
 }
 
 function showTab(name) {
@@ -1227,7 +1233,8 @@ async function updateMapping(sourceId, itemId, mutate) {
         manualValue: mapping.manualValue ?? mapping.ManualValue ?? null,
         pollRateMs: mapping.pollRateMs ?? mapping.PollRateMs ?? 0,
         deadbandPct: Number(mapping.deadbandPct ?? mapping.DeadbandPct ?? 0),
-        writeable: (mapping.writeable ?? mapping.Writeable) === true
+        writeable: (mapping.writeable ?? mapping.Writeable) === true,
+        accessRights: mapping.accessRights || mapping.AccessRights || 'Read'
     };
     mutate(payload);
     const r = await fetch('/api/mappings/update', {
@@ -1509,28 +1516,22 @@ function bindDynamicButtons() {
         }
         if (button.dataset.action === 'save-tag') {
             updateMapping(sourceId, itemId, payload => {
-                const access = el('fpAccess').value;
+                const simulated = el('fpSimulated').checked;
                 payload.displayName = el('fpDisplayName').value.trim() || itemId;
+                payload.accessRights = el('fpAccess').value;
                 payload.pollRateMs = Number.parseInt(el('fpPollRate').value, 10) || 0;
                 payload.deadbandPct = Math.max(0, Math.min(100, Number.parseFloat(el('fpDeadband').value) || 0));
                 payload.description = el('fpDescription').value.trim() || null;
-                if (access === 'Write') {
+                if (simulated) {
                     payload.mode = 'Manual';
-                    payload.writeable = true;
                     const manualField = el('fpManualInput');
                     if (!manualField.value.trim()) {
                         const liveText = el('fpLivePanel')?.querySelector('.fp-v')?.textContent || '';
                         manualField.value = liveText;
                     }
                     payload.manualValue = manualField.value.trim() || '';
-                    payload.enabled = true;
-                } else if (access === 'Read-Write') {
-                    payload.mode = 'Source';
-                    payload.writeable = true;
-                    payload.manualValue = null;
                 } else {
                     payload.mode = 'Source';
-                    payload.writeable = false;
                     payload.manualValue = null;
                 }
             }).then(() => {
@@ -1548,6 +1549,9 @@ function bindDynamicButtons() {
                 if (!target.checked) { payload.mode = 'Source'; payload.manualValue = null; payload.writeable = false; }
             }).then(() => openFaceplate(target.dataset.sourceId || '', target.dataset.itemId || '')).catch(e => alert('Update failed: ' + e.message));
             return;
+        }
+        if (target.id === 'fpSimulated') {
+            updateManualInputState();
         }
         if (target.id === 'fpAccess') {
             updateManualInputState();

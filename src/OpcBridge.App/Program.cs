@@ -275,7 +275,8 @@ app.MapPost("/api/mappings/add", (MappingAddRequest request, MappingStore store)
             ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue,
             PollRateMs = tag.PollRateMs ?? 0,
             DeadbandPct = tag.DeadbandPct ?? 0f,
-            Writeable = tag.Writeable ?? false
+            Writeable = tag.Writeable ?? false,
+            AccessRights = string.IsNullOrWhiteSpace(tag.AccessRights) ? TagAccessRights.Read : tag.AccessRights
         });
 
     long version = store.Add(tags);
@@ -301,8 +302,8 @@ app.MapPost("/api/mappings/bulk-add", (MappingAddRequest request, MappingStore s
             Mode = string.IsNullOrWhiteSpace(tag.Mode) ? TagMode.Source : tag.Mode,
             ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue,
             PollRateMs = tag.PollRateMs ?? 0,
-            DeadbandPct = tag.DeadbandPct ?? 0f,
-            Writeable = tag.Writeable ?? false
+            Writeable = tag.Writeable ?? false,
+            AccessRights = string.IsNullOrWhiteSpace(tag.AccessRights) ? TagAccessRights.Read : tag.AccessRights
         })
         .Where(tag => !string.IsNullOrWhiteSpace(tag.DaItemId));
 
@@ -328,8 +329,8 @@ app.MapPost("/api/mappings/update", (MappingUpdateRequest request, MappingStore 
         Mode = string.IsNullOrWhiteSpace(request.Tag.Mode) ? TagMode.Source : request.Tag.Mode,
         ManualValue = string.IsNullOrWhiteSpace(request.Tag.ManualValue) ? null : request.Tag.ManualValue,
         PollRateMs = request.Tag.PollRateMs ?? 0,
-        DeadbandPct = request.Tag.DeadbandPct ?? 0f,
-        Writeable = request.Tag.Writeable ?? false
+        Writeable = request.Tag.Writeable ?? false,
+        AccessRights = string.IsNullOrWhiteSpace(request.Tag.AccessRights) ? TagAccessRights.Read : request.Tag.AccessRights
     };
 
     if (!store.TryUpdate(tag, out long version))

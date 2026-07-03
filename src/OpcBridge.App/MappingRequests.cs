@@ -12,7 +12,8 @@ public sealed record MappingTagDto(
     string? ManualValue = null,
     int? PollRateMs = null,
     float? DeadbandPct = null,
-    bool? Writeable = null);
+    bool? Writeable = null,
+    string? AccessRights = null);
 
 public sealed record MappingAddRequest(List<MappingTagDto>? Tags);
 

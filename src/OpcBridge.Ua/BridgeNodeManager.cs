@@ -177,9 +177,12 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
     private BaseDataVariableState CreateVariable(FolderState parent, TagMapping mapping)
     {
         NodeId dataType = ToDataTypeId(mapping.DataType);
-        byte accessLevel = mapping.Writeable
-            ? (byte)(AccessLevels.CurrentRead | AccessLevels.CurrentWrite)
-            : AccessLevels.CurrentRead;
+        byte accessLevel = mapping.AccessRights switch
+        {
+            "Write" => AccessLevels.CurrentWrite,
+            "Read-Write" => (byte)(AccessLevels.CurrentRead | AccessLevels.CurrentWrite),
+            _ => AccessLevels.CurrentRead
+        };
         AttributeWriteMask writeMask = AttributeWriteMask.None;
 
         BaseDataVariableState variable = new(parent)

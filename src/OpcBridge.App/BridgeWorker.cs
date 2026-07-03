@@ -749,8 +749,12 @@ public sealed class BridgeWorker : BackgroundService
             {
                 TagMapping[] all = sourceMappings.ToArray();
                 TagMapping[] active = sourceMappings.Where(mapping => mapping.Enabled).ToArray();
-                TagMapping[] sourceRead = active.Where(mapping => string.Equals(mapping.Mode, TagMode.Source, StringComparison.OrdinalIgnoreCase)).ToArray();
-                TagMapping[] manual = active.Where(mapping => string.Equals(mapping.Mode, TagMode.Manual, StringComparison.OrdinalIgnoreCase)).ToArray();
+                TagMapping[] sourceRead = active.Where(mapping =>
+                    string.Equals(mapping.Mode, TagMode.Source, StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(mapping.AccessRights, TagAccessRights.Write, StringComparison.OrdinalIgnoreCase)).ToArray();
+                TagMapping[] manual = active.Where(mapping =>
+                    string.Equals(mapping.Mode, TagMode.Manual, StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(mapping.AccessRights, TagAccessRights.Write, StringComparison.OrdinalIgnoreCase)).ToArray();
                 frozenMappings[sourceId] = new SourceMappingSet(all, active, sourceRead, manual);
             }
 

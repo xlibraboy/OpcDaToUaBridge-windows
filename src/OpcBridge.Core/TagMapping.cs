@@ -14,10 +14,18 @@ public sealed class TagMapping
     public int PollRateMs { get; set; }
     public float DeadbandPct { get; set; }
     public bool Writeable { get; set; }
+    public string AccessRights { get; set; } = TagAccessRights.Read;
 }
 
 public static class TagMode
 {
     public const string Source = "Source";
     public const string Manual = "Manual";
+}
+
+public static class TagAccessRights
+{
+    public const string Read = "Read";
+    public const string ReadWrite = "Read-Write";
+    public const string Write = "Write";
 }
