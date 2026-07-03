@@ -128,6 +128,7 @@ internal static class DashboardPage
         .modal-close:hover { color: var(--text); }
         .modal-b { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
         .fp-body { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .mapping-toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
         @media (max-width: 520px) { .fp-body { grid-template-columns: 1fr; } }
         .fp-panel { background: var(--bg); border: 1px solid var(--border2); border-radius: 6px; padding: 12px 13px; }
         .fp-k { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 7px; }
@@ -413,6 +414,21 @@ internal static class DashboardPage
                 </div>
             </div>
             <div class="hint" id="mappingMessage" style="margin-bottom:10px">Click a tag to open its faceplate. Disable a tag to stop publishing it, or set a manual value to override the DA source.</div>
+            <div class="mapping-toolbar">
+                <input id="mappingFilter" type="text" placeholder="Filter by name, item ID, UA node, source…" style="flex:1;min-width:120px">
+                <label class="fl" style="width:auto">Sort</label>
+                <select id="mappingSort">
+                    <option value="name">Name</option>
+                    <option value="source">Server (Source)</option>
+                    <option value="item">DA Item ID</option>
+                    <option value="node">UA Node</option>
+                    <option value="access">Access Mode</option>
+                    <option value="rate">Poll Rate</option>
+                    <option value="deadband">Deadband</option>
+                    <option value="status">Status (Enabled first)</option>
+                </select>
+                <button class="btn ghost" type="button" id="mappingSortDir" title="Toggle sort direction">↑</button>
+            </div>
             <div class="list" id="mappedList"></div>
         </div>
     </div>
@@ -514,7 +530,6 @@ document.addEventListener('mouseover', e => {
     let y = r.top - tr.height - 6;
     if (y < 4) y = r.bottom + 6;
     if (x < 4) x = 4;
-    if (x + tr.width > window.innerWidth - 4) x = window.innerWidth - tr.width - 4;
     tipEl.style.left = x + 'px';
     tipEl.style.top = y + 'px';
 });
@@ -531,6 +546,9 @@ const state = {
     logsLoaded: false,
     appInfoLoaded: false,
     mappings: [],
+    mappingSort: 'name',
+    mappingSortDir: 1,
+    mappingFilter: '',
     valuesByKey: new Map(),
     handleHistory: [],
     handleBaseline: null
@@ -1108,8 +1126,52 @@ async function loadMappings() {
     const p = await (await fetch('/api/mappings', { cache: 'no-store' })).json();
     const mappings = p.mappings || [];
     state.mappings = mappings;
-    el('mapCount').textContent = mappings.length + ' mappings';
-    el('mappedList').innerHTML = renderMappingRows(mappings);
+    const view = applyMappingView(mappings);
+    el('mapCount').textContent = view.length + (view.length !== mappings.length ? ' / ' + mappings.length + ' mappings' : ' mappings');
+    el('mappedList').innerHTML = renderMappingRows(view);
+}
+function applyMappingView(mappings) {
+    const filter = (state.mappingFilter || '').trim().toLowerCase();
+    let view = mappings;
+    if (filter) {
+        view = mappings.filter(m => {
+            const sourceId = m.sourceId || m.SourceId || 'default';
+            const item = m.daItemId || m.DaItemId || '';
+            const name = m.displayName || m.DisplayName || item;
+            const node = m.uaNodeId || m.UaNodeId || defaultUaNodeId(sourceId, item);
+            return [sourceId, item, name, node].some(v => String(v).toLowerCase().includes(filter));
+        });
+    }
+    const key = state.mappingSort;
+    const dir = state.mappingSortDir;
+    const accessRank = m => {
+        const enabled = (m.enabled ?? m.Enabled) !== false;
+        if (!enabled) return 0;
+        const mode = m.mode || m.Mode || 'Source';
+        if (mode === 'Manual') return 1;
+        return ((m.writeable ?? m.Writeable) === true) ? 2 : 3;
+    };
+    const cmp = (a, b) => {
+        let av, bv;
+        switch (key) {
+            case 'source': av = (a.sourceId || a.SourceId || 'default'); bv = (b.sourceId || b.SourceId || 'default'); break;
+            case 'item': av = (a.daItemId || a.DaItemId || ''); bv = (b.daItemId || b.DaItemId || ''); break;
+            case 'node': av = (a.uaNodeId || a.UaNodeId || ''); bv = (b.uaNodeId || b.UaNodeId || ''); break;
+            case 'access': av = accessRank(a); bv = accessRank(b); break;
+            case 'rate': av = (a.pollRateMs ?? a.PollRateMs ?? 0); bv = (b.pollRateMs ?? b.PollRateMs ?? 0); break;
+            case 'deadband': av = Number(a.deadbandPct ?? a.DeadbandPct ?? 0); bv = Number(b.deadbandPct ?? b.DeadbandPct ?? 0); break;
+            case 'status': av = ((a.enabled ?? a.Enabled) !== false) ? 0 : 1; bv = ((b.enabled ?? b.Enabled) !== false) ? 0 : 1; break;
+            default: av = (a.displayName || a.DisplayName || a.daItemId || a.DaItemId || ''); bv = (b.displayName || b.DisplayName || b.daItemId || b.DaItemId || '');
+        }
+        if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+        return String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' }) * dir;
+    };
+    return view.slice().sort(cmp);
+}
+function rerenderMappings() {
+    const view = applyMappingView(state.mappings || []);
+    el('mapCount').textContent = view.length + (view.length !== (state.mappings || []).length ? ' / ' + (state.mappings || []).length + ' mappings' : ' mappings');
+    el('mappedList').innerHTML = renderMappingRows(view);
 }
 
 function getMapping(sourceId, itemId) {
@@ -1472,6 +1534,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     el('btnBrowseTags').addEventListener('click', () => browseTags('').catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
     el('btnBrowseAllTags').addEventListener('click', () => browseTags('', true).catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
     el('manualAdd').addEventListener('click', () => addManual().catch(e => alert('Add failed: ' + e.message)));
+    el('mappingFilter').addEventListener('input', e => { state.mappingFilter = e.target.value; rerenderMappings(); });
+    el('mappingSort').addEventListener('change', e => { state.mappingSort = e.target.value; rerenderMappings(); });
+    el('mappingSortDir').addEventListener('click', () => { state.mappingSortDir *= -1; el('mappingSortDir').textContent = state.mappingSortDir > 0 ? '↑' : '↓'; rerenderMappings(); });
     el('toggleLiveValues').addEventListener('click', toggleLiveValues);
     el('btnRefreshLogs').addEventListener('click', () => loadLogs(true).catch(e => el('logMessage').textContent = '✗ ' + e.message));
     el('logLevel').addEventListener('change', () => {
