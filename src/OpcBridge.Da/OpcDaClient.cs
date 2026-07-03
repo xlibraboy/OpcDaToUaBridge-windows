@@ -85,14 +85,11 @@ public sealed class OpcDaClient : IDaClient
             return;
         }
 
-        if (hasCredentials)
-        {
-            ConnectWithImpersonation(progId, host!);
-        }
-        else
-        {
-            ConnectDirect(progId, host);
-        }
+        // ConnectDirect handles both local and remote DCOM.
+        // For remote with credentials, it passes COAUTHINFO/COAUTHIDENTITY directly
+        // to CoCreateInstanceEx — no LogonUser/impersonation needed (which causes
+        // 0xC0000005 access violations when combined with COAUTHINFO).
+        ConnectDirect(progId, host);
 
     }
 
@@ -148,109 +145,46 @@ public sealed class OpcDaClient : IDaClient
             return;
         }
 
-        // Remote DCOM activation via native CoCreateInstanceEx with explicit COAUTHINFO.
-        int clsidHr = CLSIDFromProgID(progId, out Guid clsid);
-        if (clsidHr < 0)
-        {
-            throw new InvalidOperationException($"OPC DA server ProgID '{progId}' is not registered (CLSIDFromProgID failed 0x{clsidHr:X8}).");
-        }
-
-        // Build COAUTHIDENTITY with explicit credentials so DCOM authenticates to the remote host.
-        // Without this, CoCreateInstanceEx uses the process token, which fails with 80070005
-        // when the local user has no rights on the remote DCOM server.
+        // Remote DCOM activation: use LogonUser + impersonation + Type.GetTypeFromProgID.
+        // This avoids the fragile CoCreateInstanceEx P/Invoke with COAUTHINFO marshalling
+        // that caused 0xC0000005 (access violation) and 0x80070057 (invalid arg) crashes.
         string username = options_.RemoteUsername ?? string.Empty;
         string password = options_.RemotePassword ?? string.Empty;
         string domain = string.IsNullOrWhiteSpace(options_.RemoteDomain) ? host! : options_.RemoteDomain!;
 
-        IntPtr userPtr = Marshal.StringToHGlobalUni(username);
-        IntPtr passPtr = Marshal.StringToHGlobalUni(password);
-        IntPtr domainPtr = Marshal.StringToHGlobalUni(domain);
-        IntPtr authInfoPtr = IntPtr.Zero;
+        if (!LogonUser(username, domain, password, 9, 3, out nint token))
+        {
+            int error = Marshal.GetLastWin32Error();
+            throw new InvalidOperationException(
+                $"Logon failed for '{domain}\\{username}' (Win32 error {error}). " +
+                "Check RemoteUsername, RemotePassword, RemoteDomain.");
+        }
 
         try
         {
-            COAUTHIDENTITY authIdentity = new()
+            using var identity = new WindowsIdentity(token);
+            WindowsIdentity.RunImpersonated(identity.AccessToken, () =>
             {
-                User = userPtr,
-                UserLength = username.Length,
-                Domain = domainPtr,
-                DomainLength = domain.Length,
-                Password = passPtr,
-                PasswordLength = password.Length,
-                Flags = 2 // SEC_WINNT_AUTH_IDENTITY_UNICODE
-            };
+                Type? serverType = Type.GetTypeFromProgID(progId, host, throwOnError: false);
+                if (serverType is null)
+                {
+                    throw new InvalidOperationException(
+                        $"OPC DA server '{progId}' is not available on host '{host}'.");
+                }
 
-            authInfoPtr = Marshal.AllocHGlobal(Marshal.SizeOf<COAUTHIDENTITY>());
-            Marshal.StructureToPtr(authIdentity, authInfoPtr, false);
+                object serverObject = Activator.CreateInstance(serverType)
+                    ?? throw new InvalidOperationException($"Failed to create OPC DA server '{progId}' on host '{host}'.");
 
-            COAUTHINFO authInfo = new()
-            {
-                dwAuthnSvc = RPC_C_AUTHN_WINNT,
-                dwAuthzSvc = RPC_C_AUTHZ_NONE,
-                pwszServerPrincipalName = IntPtr.Zero,
-                dwAuthnLevel = RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
-                dwImpersonationLevel = RPC_C_IMP_LEVEL_IMPERSONATE,
-                pAuthIdentityData = authInfoPtr,
-                dwCapabilities = EOAC_NONE
-            };
+                IOPCServer server = serverObject as IOPCServer
+                    ?? throw new InvalidOperationException($"Remote COM server '{progId}' does not expose IOPCServer.");
 
-            IntPtr authInfoStructPtr = Marshal.AllocHGlobal(Marshal.SizeOf<COAUTHINFO>());
-            Marshal.StructureToPtr(authInfo, authInfoStructPtr, false);
-
-            COSERVERINFO serverInfo = new()
-            {
-                dwReserved = IntPtr.Zero,
-                pwszName = host,
-                pAuthInfo = authInfoStructPtr
-            };
-
-            Guid iid = typeof(IOPCServer).GUID;
-            MULTI_QI[] results = new MULTI_QI[1];
-            results[0].pIID = iid;
-            results[0].pItf = IntPtr.Zero;
-            results[0].hr = 0;
-
-            int hr = CoCreateInstanceEx(
-                ref clsid,
-                IntPtr.Zero,
-                CLSCTX_REMOTE_SERVER,
-                ref serverInfo,
-                1,
-                results);
-
-            // Free the COAUTHINFO struct (COM already copied what it needs).
-            Marshal.DestroyStructure<COAUTHINFO>(authInfoStructPtr);
-            Marshal.FreeHGlobal(authInfoStructPtr);
-            Marshal.DestroyStructure<COAUTHIDENTITY>(authInfoPtr);
-            Marshal.FreeHGlobal(authInfoPtr);
-
-            if (hr < 0)
-            {
-                string hint = hr == E_ACCESSDENIED
-                    ? " — access denied (0x80070005). Check: (1) DCOM launch/access permissions on the remote host for this user (dcomcnfg → DCOM Config → server → Security), (2) username/domain/password are correct, (3) Windows Firewall allows Remote Administration on the remote host."
-                    : string.Empty;
-                throw new InvalidOperationException(
-                    $"CoCreateInstanceEx for '{progId}' on host '{host}' failed (0x{hr:X8}).{hint}");
-            }
-
-            if (results[0].hr < 0)
-            {
-                throw new InvalidOperationException(
-                    $"Remote activation of '{progId}' on host '{host}' failed (QueryInterface 0x{results[0].hr:X8}).");
-            }
-
-            object serverObj = Marshal.GetObjectForIUnknown(results[0].pItf);
-            IOPCServer remoteServer = serverObj as IOPCServer
-                ?? throw new InvalidOperationException($"Remote COM server '{progId}' does not expose IOPCServer.");
-
-            server_com_object_ = serverObj;
-            server_ = remoteServer;
+                server_com_object_ = serverObject;
+                server_ = server;
+            });
         }
         finally
         {
-            Marshal.FreeHGlobal(userPtr);
-            Marshal.FreeHGlobal(passPtr);
-            Marshal.FreeHGlobal(domainPtr);
+            CloseHandle(token);
         }
     }
 
@@ -899,6 +833,7 @@ public sealed class OpcDaClient : IDaClient
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(nint handle);
+    private const int CLSCTX_LOCAL_SERVER = 0x4;
     private const int CLSCTX_REMOTE_SERVER = 0x10;
     private const int E_ACCESSDENIED = unchecked((int)0x80070005);
     private const int RPC_C_AUTHN_WINNT = 10;
@@ -918,7 +853,7 @@ public sealed class OpcDaClient : IDaClient
         int dwClsContext,
         ref COSERVERINFO pServerInfo,
         uint dwCount,
-        [In, Out] MULTI_QI[] pResults);
+        IntPtr pResults);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct COSERVERINFO
@@ -955,7 +890,7 @@ public sealed class OpcDaClient : IDaClient
     [StructLayout(LayoutKind.Sequential)]
     private struct MULTI_QI
     {
-        public Guid pIID;
+        public IntPtr pIID;
         public IntPtr pItf;
         public int hr;
     }
