@@ -115,6 +115,8 @@ internal static class DashboardPage
         .li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 5px; border: 1px solid var(--border); background: var(--panel2); }
         .li .n { font-size: 13px; font-weight: 600; }
         .li .p { font-size: 11px; color: var(--muted); font-family: 'Consolas', monospace; }
+        .li .li-desc { color: var(--muted); font-size: 13px; cursor: help; flex-shrink: 0; }
+        .li .li-desc:hover { color: var(--accent); }
         .li.clickable { cursor: pointer; }
         .li.clickable:hover { border-color: var(--accent); }
         .li .li-badge { margin-left: auto; }
@@ -422,6 +424,7 @@ internal static class DashboardPage
                     <option value="source">Server (Source)</option>
                     <option value="item">DA Item ID</option>
                     <option value="node">UA Node</option>
+                    <option value="description">Description</option>
                     <option value="access">Access Mode</option>
                     <option value="rate">Poll Rate</option>
                     <option value="deadband">Deadband</option>
@@ -454,6 +457,7 @@ internal static class DashboardPage
             <div class="field"><label class="fl" style="width:auto">Mode</label><select id="fpMode" data-action="tag-mode"><option value="Source">Source</option><option value="Manual">Manual</option></select></div>
             <div class="field"><label class="fl" style="width:auto">Poll Rate</label><select id="fpPollRate" data-action="tag-poll-rate"><option value="0">Source Default</option><option value="100">100 ms</option><option value="250">250 ms</option><option value="500">500 ms</option><option value="1000">1 s</option><option value="2000">2 s</option><option value="5000">5 s</option><option value="10000">10 s</option></select></div>
             <div class="field"><label class="fl" style="width:auto">Deadband %</label><input type="number" id="fpDeadband" min="0" max="100" step="0.1" value="0" style="width:80px"></div>
+            <div class="field" style="flex-basis:100%"><label class="fl" style="width:auto">Description</label><input type="text" id="fpDescription" placeholder="Operator notes / tag description (optional)" style="flex:1"></div>
             <div class="field"><label class="fl" style="width:auto">Writeable</label><input type="checkbox" id="fpWriteable" data-action="tag-writeable"></div>
             <button class="btn ghost" type="button" id="fpApply" data-action="save-tag">Apply</button>
             <button class="btn ghost" type="button" id="fpRemove" data-action="remove-mapping">Remove</button>
@@ -588,7 +592,9 @@ function renderMappingRow(mapping) {
     else { accessBadge = badge('Read', 'good'); }
     const rateBadge = pollRate > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">${pollRate}ms</span>` : '';
     const deadbandBadge = deadband > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">db ${deadband}%</span>` : '';
-    return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}"><div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="n">${esc(name)}</span> <span class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</span></div><div class="li-badge">${accessBadge}${deadbandBadge}${rateBadge}</div></div>`;
+    const desc = (mapping.description || mapping.Description || '').trim();
+    const descIcon = desc ? `<span class="li-desc" title="${attr(desc)}" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">&#8505;</span>` : '';
+    return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">${descIcon}<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="n">${esc(name)}</span> <span class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</span></div><div class="li-badge">${accessBadge}${deadbandBadge}${rateBadge}</div></div>`;
 }
 
 function renderMappingRows(mappings) {
@@ -619,6 +625,7 @@ function openFaceplate(sourceId, itemId) {
     const deadband = Number(mapping.deadbandPct ?? mapping.DeadbandPct ?? 0);
     el('fpDeadband').value = String(deadband);
     const writeable = (mapping.writeable ?? mapping.Writeable) === true;
+    el('fpDescription').value = String(mapping.description ?? mapping.Description ?? '');
     el('fpWriteable').checked = writeable;
     el('fpModeHint').textContent = 'Mode ' + mode;
     el('fpApply').dataset.sourceId = sourceId;
@@ -1139,7 +1146,7 @@ function applyMappingView(mappings) {
             const item = m.daItemId || m.DaItemId || '';
             const name = m.displayName || m.DisplayName || item;
             const node = m.uaNodeId || m.UaNodeId || defaultUaNodeId(sourceId, item);
-            return [sourceId, item, name, node].some(v => String(v).toLowerCase().includes(filter));
+            return [sourceId, item, name, node, m.description || m.Description || ''].some(v => String(v).toLowerCase().includes(filter));
         });
     }
     const key = state.mappingSort;
@@ -1161,6 +1168,7 @@ function applyMappingView(mappings) {
             case 'rate': av = (a.pollRateMs ?? a.PollRateMs ?? 0); bv = (b.pollRateMs ?? b.PollRateMs ?? 0); break;
             case 'deadband': av = Number(a.deadbandPct ?? a.DeadbandPct ?? 0); bv = Number(b.deadbandPct ?? b.DeadbandPct ?? 0); break;
             case 'status': av = ((a.enabled ?? a.Enabled) !== false) ? 0 : 1; bv = ((b.enabled ?? b.Enabled) !== false) ? 0 : 1; break;
+            case 'description': av = (a.description || a.Description || ''); bv = (b.description || b.Description || ''); break;
             default: av = (a.displayName || a.DisplayName || a.daItemId || a.DaItemId || ''); bv = (b.displayName || b.DisplayName || b.daItemId || b.DaItemId || '');
         }
         if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
@@ -1191,6 +1199,7 @@ async function updateMapping(sourceId, itemId, mutate) {
         sourceId,
         daItemId: itemId,
         displayName: mapping.displayName || mapping.DisplayName || itemId,
+        description: mapping.description ?? mapping.Description ?? null,
         dataType: mapping.dataType || mapping.DataType || 'Auto',
         uaNodeId: mapping.uaNodeId || mapping.UaNodeId || defaultUaNodeId(sourceId, itemId),
         enabled: (mapping.enabled ?? mapping.Enabled) !== false,
@@ -1484,6 +1493,7 @@ function bindDynamicButtons() {
                 payload.pollRateMs = Number.parseInt(el('fpPollRate').value, 10) || 0;
                 payload.deadbandPct = Math.max(0, Math.min(100, Number.parseFloat(el('fpDeadband').value) || 0));
                 payload.writeable = el('fpWriteable').checked;
+                payload.description = el('fpDescription').value.trim() || null;
                 if (payload.mode === 'Manual') {
                     const manualField = el('fpManualInput');
                     if (!manualField.value.trim()) {

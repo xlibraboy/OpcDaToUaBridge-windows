@@ -6,6 +6,7 @@ public sealed class TagMapping
     public string DaItemId { get; set; } = string.Empty;
     public string UaNodeId { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
+    public string? Description { get; set; }
     public string DataType { get; set; } = "Double";
     public bool Enabled { get; set; } = true;
     public string Mode { get; set; } = TagMode.Source;

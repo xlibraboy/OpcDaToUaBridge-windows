@@ -4,6 +4,7 @@ public sealed record MappingTagDto(
     string SourceId,
     string DaItemId,
     string? DisplayName = null,
+    string? Description = null,
     string? DataType = null,
     string? UaNodeId = null,
     bool? Enabled = null,

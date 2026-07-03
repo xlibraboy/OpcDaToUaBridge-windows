@@ -180,6 +180,7 @@ public sealed class MappingStore
             DaItemId = itemId,
             UaNodeId = string.IsNullOrWhiteSpace(tag.UaNodeId) ? defaultNodeId : tag.UaNodeId.Trim(),
             DisplayName = string.IsNullOrWhiteSpace(tag.DisplayName) ? itemId : tag.DisplayName.Trim(),
+            Description = string.IsNullOrWhiteSpace(tag.Description) ? null : tag.Description.Trim(),
             DataType = string.IsNullOrWhiteSpace(tag.DataType) ? "Auto" : tag.DataType.Trim(),
             Enabled = tag.Enabled,
             Mode = NormalizeMode(tag.Mode),

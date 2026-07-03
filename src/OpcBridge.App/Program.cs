@@ -267,6 +267,7 @@ app.MapPost("/api/mappings/add", (MappingAddRequest request, MappingStore store)
             SourceId = tag.SourceId,
             DaItemId = tag.DaItemId,
             DisplayName = tag.DisplayName ?? string.Empty,
+            Description = tag.Description,
             DataType = tag.DataType ?? "Auto",
             UaNodeId = tag.UaNodeId ?? string.Empty,
             Enabled = tag.Enabled ?? true,
@@ -292,6 +293,7 @@ app.MapPost("/api/mappings/bulk-add", (MappingAddRequest request, MappingStore s
         {
             SourceId = string.IsNullOrWhiteSpace(tag.SourceId) ? "default" : tag.SourceId,
             DaItemId = tag.DaItemId ?? string.Empty,
+            Description = tag.Description,
             DisplayName = tag.DisplayName ?? string.Empty,
             DataType = tag.DataType ?? "Auto",
             UaNodeId = tag.UaNodeId ?? string.Empty,
@@ -319,6 +321,7 @@ app.MapPost("/api/mappings/update", (MappingUpdateRequest request, MappingStore 
         SourceId = request.Tag.SourceId,
         DaItemId = request.Tag.DaItemId,
         DisplayName = request.Tag.DisplayName ?? string.Empty,
+        Description = request.Tag.Description,
         DataType = request.Tag.DataType ?? "Auto",
         UaNodeId = request.Tag.UaNodeId ?? string.Empty,
         Enabled = request.Tag.Enabled ?? true,
