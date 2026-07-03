@@ -612,6 +612,13 @@ function renderMappingRow(mapping) {
     return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">${descIcon}<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="n">${esc(name)}</span> <span class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</span></div><div class="li-badge">${accessBadge}${deadbandBadge}${rateBadge}</div></div>`;
 }
 
+function renderMappingRows(mappings) {
+    return mappings.length ? mappings.map(renderMappingRow).join('') : '<span class="msg">No DA → OPC UA mappings.</span>';
+}
+
+let faceplateOpen = false;
+let faceplateKey = null;
+
 function openFaceplate(sourceId, itemId) {
     const mapping = getMapping(sourceId, itemId);
     if (!mapping) return;
