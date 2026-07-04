@@ -391,6 +391,17 @@ internal static class DashboardPage
                     <div class="list" id="sourcesList" style="max-height:280px"></div>
                 </div>
             </div>
+            <div class="box">
+                <div class="box-h">Backup &amp; Restore</div>
+                <div class="box-b">
+                    <div class="toolbar">
+                        <button class="btn ghost" id="btnExportConfig" type="button">Export Config</button>
+                        <button class="btn ghost" id="btnImportConfig" type="button">Import Config</button>
+                        <input type="file" id="importConfigFile" accept=".json" style="display:none">
+                    </div>
+                    <div class="hint" id="configMessage">Export saves all sources, settings, and tag mappings to a JSON file. Passwords are not included — re-enter after import.</div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -1588,6 +1599,35 @@ document.addEventListener('DOMContentLoaded', async () => {
         el(id).addEventListener('input', () => { if (!state.editingNewSource) showSaveReset(); });
     });
     el('cfgApplyRate').addEventListener('click', () => saveUpdateRate().catch(e => el('rateMessage').textContent = '✗ ' + e.message));
+    el('btnExportConfig').addEventListener('click', async () => {
+        try {
+            const r = await fetch('/api/config/export');
+            const blob = await r.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `opcbridge-config-${new Date().toISOString().slice(0,10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            el('configMessage').textContent = 'Config exported.';
+        } catch (e) { el('configMessage').textContent = '✗ ' + e.message; }
+    });
+    el('btnImportConfig').addEventListener('click', () => el('importConfigFile').click());
+    el('importConfigFile').addEventListener('change', async e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+            const text = await file.text();
+            const r = await fetch('/api/config/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: text });
+            const p = await r.json();
+            if (!r.ok) throw new Error(p.error || ('HTTP ' + r.status));
+            el('configMessage').textContent = 'Config imported. Re-enter DCOM passwords and save each source.';
+            await loadSources();
+            await loadMappings();
+            await refresh();
+        } catch (err) { el('configMessage').textContent = '✗ ' + err.message; }
+        e.target.value = '';
+    });
     el('cfgUseSubscriptions').addEventListener('change', async e => {
         try {
             const r = await fetch('/api/da/use-subscriptions', {
