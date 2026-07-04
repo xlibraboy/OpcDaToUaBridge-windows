@@ -258,7 +258,7 @@ internal static class DashboardPage
             <div class="stat"><div class="k">Last Write</div><div class="v" id="lastUaWrite">&#8212;</div><div class="s" id="lastUaWriteCount">0 values</div></div>
         </div>
         <div class="mon-stat-group">
-            <div class="mon-stat-group-h">Polling</div>
+            <div class="mon-stat-group-h">Update Rate</div>
             <div class="stat"><div class="k">Default Rate</div><div class="v" id="updateRate">&#8212;</div><div class="s" id="mappingCount">0 tags</div></div>
             <div class="stat"><div class="k">Cycle Budget</div><div class="mini-meter" aria-hidden="true"><div class="mini-meter-track"><div class="mini-meter-fill" id="pollUtilizationFill"></div></div></div><div class="s" id="pollUtilizationText">—</div><div class="s" id="pollSaturation">—</div></div>
         </div>
@@ -810,7 +810,7 @@ function formatPollSaturation(lastPollDurationMs, updateRateMs) {
     const duration = Number(lastPollDurationMs ?? 0);
     const rate = Number(updateRateMs ?? 0);
     if (duration <= 0 || rate <= 0) return { text: 'Waiting for cycle timing…', className: 's' };
-    if (duration >= rate) return { text: 'Poll saturated · cycle time is at or above the configured rate.', className: 's bad' };
+    if (duration >= rate) return { text: 'Cycle saturated · read time at or above configured rate.', className: 's bad' };
     if (duration >= rate * 0.8) return { text: 'Cycle budget is getting tight.', className: 's warn' };
     return { text: 'Cycle timing normal.', className: 's' };
 }
