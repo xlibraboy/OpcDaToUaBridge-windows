@@ -34,3 +34,7 @@ publish/
 
 # Runtime state (generated at runtime)
 mappings.json
+
+
+# Subagent-driven development worktrees
+.worktrees/
