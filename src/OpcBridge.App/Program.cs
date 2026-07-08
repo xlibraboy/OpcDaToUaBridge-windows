@@ -19,6 +19,7 @@ builder.Configuration.AddJsonFile("appsettings.json", optional: false, reloadOnC
 builder.Services.Configure<BridgeOptions>(builder.Configuration.GetSection("Bridge"));
 builder.Services.Configure<DaClientOptions>(builder.Configuration.GetSection("Da"));
 builder.Services.Configure<UaServerOptions>(builder.Configuration.GetSection("Ua"));
+builder.Services.Configure<MqttBrokerOptions>(builder.Configuration.GetSection("Mqtt"));
 builder.Services.AddSingleton<DashboardLogStore>();
 builder.Logging.Services.AddSingleton<ILoggerProvider, DashboardLogProvider>();
 
@@ -290,7 +291,9 @@ app.MapPost("/api/mappings/add", (MappingAddRequest request, MappingStore store)
             PollRateMs = tag.PollRateMs ?? 0,
             DeadbandPct = tag.DeadbandPct ?? 0f,
             Writeable = tag.Writeable ?? false,
-            AccessRights = string.IsNullOrWhiteSpace(tag.AccessRights) ? TagAccessRights.Read : tag.AccessRights
+            AccessRights = string.IsNullOrWhiteSpace(tag.AccessRights) ? TagAccessRights.Read : tag.AccessRights,
+            MqttEnabled = tag.MqttEnabled ?? false,
+            MqttTopic = string.IsNullOrWhiteSpace(tag.MqttTopic) ? null : tag.MqttTopic
         });
 
     long version = store.Add(tags);
@@ -317,7 +320,9 @@ app.MapPost("/api/mappings/bulk-add", (MappingAddRequest request, MappingStore s
             ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue,
             PollRateMs = tag.PollRateMs ?? 0,
             Writeable = tag.Writeable ?? false,
-            AccessRights = string.IsNullOrWhiteSpace(tag.AccessRights) ? TagAccessRights.Read : tag.AccessRights
+            AccessRights = string.IsNullOrWhiteSpace(tag.AccessRights) ? TagAccessRights.Read : tag.AccessRights,
+            MqttEnabled = tag.MqttEnabled ?? false,
+            MqttTopic = string.IsNullOrWhiteSpace(tag.MqttTopic) ? null : tag.MqttTopic
         })
         .Where(tag => !string.IsNullOrWhiteSpace(tag.DaItemId));
 
@@ -344,7 +349,9 @@ app.MapPost("/api/mappings/update", (MappingUpdateRequest request, MappingStore 
         ManualValue = string.IsNullOrWhiteSpace(request.Tag.ManualValue) ? null : request.Tag.ManualValue,
         PollRateMs = request.Tag.PollRateMs ?? 0,
         Writeable = request.Tag.Writeable ?? false,
-        AccessRights = string.IsNullOrWhiteSpace(request.Tag.AccessRights) ? TagAccessRights.Read : request.Tag.AccessRights
+        AccessRights = string.IsNullOrWhiteSpace(request.Tag.AccessRights) ? TagAccessRights.Read : request.Tag.AccessRights,
+        MqttEnabled = request.Tag.MqttEnabled ?? false,
+        MqttTopic = string.IsNullOrWhiteSpace(request.Tag.MqttTopic) ? null : request.Tag.MqttTopic
     };
 
     if (!store.TryUpdate(tag, out long version))
@@ -596,6 +603,86 @@ app.MapPost("/api/ua/settings", async (HttpContext context, UaServerHost uaServe
         return Results.BadRequest(new { error = ex.Message });
     }
 });
+app.MapGet("/api/mqtt/config", (MqttRuntimeSettings settings) =>
+{
+    MqttRuntimeSnapshot snapshot = settings.GetSnapshot();
+    return Results.Json(new
+    {
+        enabled = snapshot.Options.Enabled,
+        brokerUrl = snapshot.Options.BrokerUrl,
+        clientId = snapshot.Options.ClientId,
+        userName = snapshot.Options.UserName,
+        password = snapshot.Options.Password,
+        tls = snapshot.Options.Tls,
+        ignoreCertErrors = snapshot.Options.IgnoreCertErrors,
+        topicPrefix = snapshot.Options.TopicPrefix,
+        payloadFields = snapshot.Options.PayloadFields.ToString()
+    });
+});
+app.MapPost("/api/mqtt/config", (MqttConfigRequest request, MqttRuntimeSettings settings) =>
+{
+    MqttBrokerOptions options = settings.GetOptions();
+    MqttBrokerOptions updated = new()
+    {
+        Enabled = request.Enabled,
+        BrokerUrl = string.IsNullOrWhiteSpace(request.BrokerUrl) ? options.BrokerUrl : request.BrokerUrl.Trim(),
+        ClientId = string.IsNullOrWhiteSpace(request.ClientId) ? options.ClientId : request.ClientId.Trim(),
+        UserName = request.UserName,
+        Password = request.Password,
+        Tls = request.Tls,
+        IgnoreCertErrors = request.IgnoreCertErrors,
+        TopicPrefix = string.IsNullOrWhiteSpace(request.TopicPrefix) ? options.TopicPrefix : request.TopicPrefix.Trim(),
+        PayloadFields = ParsePayloadFields(request.PayloadFields) ?? options.PayloadFields
+    };
+    settings.UpsertOptions(updated);
+    return Results.Json(new { status = "ok" });
+});
+app.MapPost("/api/mqtt/connect", async (MqttRuntimeSettings settings, IMqttBridge bridge) =>
+{
+    try
+    {
+        await bridge.ConnectAsync(settings.GetOptions(), CancellationToken.None);
+        return Results.Json(new { status = "ok", state = settings.GetSnapshot().State });
+    }
+    catch (Exception ex)
+    {
+        settings.SetState("Faulted", ex.Message);
+        return Results.Json(new { status = "error", error = ex.Message });
+    }
+});
+app.MapPost("/api/mqtt/disconnect", async (MqttRuntimeSettings settings, IMqttBridge bridge) =>
+{
+    await bridge.DisconnectAsync(CancellationToken.None);
+    settings.SetState("Disconnected");
+    return Results.Json(new { status = "ok" });
+});
+app.MapGet("/api/mqtt/status", (MqttRuntimeSettings settings) =>
+{
+    MqttRuntimeSnapshot snapshot = settings.GetSnapshot();
+    return Results.Json(new
+    {
+        state = snapshot.State,
+        lastError = snapshot.LastError,
+        publishedCount = snapshot.PublishedCount,
+        receivedCount = snapshot.ReceivedCount,
+        enabled = snapshot.Options.Enabled
+    });
+});
+app.MapGet("/api/mqtt/logs", (MqttTrafficStore traffic, int? limit) =>
+{
+    IReadOnlyList<MqttTrafficEntry> entries = traffic.GetEntries(limit ?? 200);
+    return Results.Json(new
+    {
+        entries = entries.Select(e => new
+        {
+            direction = e.Direction,
+            topic = e.Topic,
+            detail = e.Detail,
+            timestampUtc = e.TimestampUtc
+        })
+    });
+});
+
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
 await app.RunAsync().ConfigureAwait(false);
@@ -638,3 +725,22 @@ static bool TryParseLogLevel(string? value, out LogLevel level)
 
     return Enum.TryParse(value.Trim(), ignoreCase: true, out level);
 }
+
+static MqttPayloadField? ParsePayloadFields(string? value)
+{
+    if (string.IsNullOrWhiteSpace(value)) return null;
+    return Enum.TryParse<MqttPayloadField>(value.Trim(), ignoreCase: true, out MqttPayloadField result)
+        ? result
+        : null;
+}
+
+record MqttConfigRequest(
+    bool Enabled,
+    string? BrokerUrl,
+    string? ClientId,
+    string? UserName,
+    string? Password,
+    bool Tls,
+    bool IgnoreCertErrors,
+    string? TopicPrefix,
+    string? PayloadFields);
