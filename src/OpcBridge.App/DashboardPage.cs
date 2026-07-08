@@ -284,6 +284,7 @@ internal static class DashboardPage
                 <div class="msg" style="margin-top:6px;color:var(--muted)">Use this URL in your OPC UA client to connect from another machine</div>
                 <div class="msg" id="uaDiagnostics" style="margin-top:8px">0 nodes · no updates yet</div>
             </div>
+        </div>
     </div>
     <div class="box">
         <div class="box-h">DA Live Values <span class="msg" id="valCount" style="margin-left:auto"></span><button class="btn ghost" id="toggleLiveValues" type="button">Disable Live Data</button></div>
