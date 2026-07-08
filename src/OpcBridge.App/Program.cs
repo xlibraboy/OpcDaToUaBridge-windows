@@ -243,7 +243,17 @@ app.MapPost("/api/da/tags", async (DaTagBrowseRequest request) =>
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         OpcTagBrowseResult result = await Task.Run(() => BrowseDaTags(request), cts.Token);
-        return Results.Json(new { branches = result.Branches, tags = result.Tags });
+        return Results.Json(new
+        {
+            branches = result.Branches,
+            tags = result.Tags.Select(tag => new
+            {
+                name = tag.Name,
+                itemId = tag.ItemId,
+                canonicalDataType = tag.CanonicalDataType,
+                accessRights = tag.AccessRights
+            })
+        });
     }
     catch (OperationCanceledException)
     {
