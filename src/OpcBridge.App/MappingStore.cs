@@ -183,8 +183,12 @@ public sealed class MappingStore
             mode = TagMode.Source;
         }
 
+        (string? providerSourceId, string? providerDaItemId) = NormalizeProvider(tag, sourceId, itemId);
+
         return new TagMapping
         {
+            ProviderSourceId = providerSourceId,
+            ProviderDaItemId = providerDaItemId,
             SourceId = sourceId,
             DaItemId = itemId,
             UaNodeId = string.IsNullOrWhiteSpace(tag.UaNodeId) ? defaultNodeId : tag.UaNodeId.Trim(),
@@ -199,6 +203,30 @@ public sealed class MappingStore
             Writeable = writeable,
             AccessRights = accessRights
         };
+    }
+
+    /// <summary>
+    /// Normalizes the optional provider link. Returns nulls when no link is set, or when the
+    /// link points at the tag itself (a self-link is rejected to avoid a write loop).
+    /// </summary>
+    private static (string? SourceId, string? DaItemId) NormalizeProvider(TagMapping tag, string sourceId, string itemId)
+    {
+        string? providerSourceId = tag.ProviderSourceId?.Trim();
+        string? providerDaItemId = tag.ProviderDaItemId?.Trim();
+        if (string.IsNullOrEmpty(providerSourceId) || string.IsNullOrEmpty(providerDaItemId))
+        {
+            return (null, null);
+        }
+
+        providerSourceId = NormalizeSourceId(providerSourceId);
+        if (string.Equals(providerSourceId, sourceId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(providerDaItemId, itemId, StringComparison.OrdinalIgnoreCase))
+        {
+            // Self-link would create a write loop; drop it.
+            return (null, null);
+        }
+
+        return (providerSourceId, providerDaItemId);
     }
 
     private static string NormalizeSourceId(string? sourceId)

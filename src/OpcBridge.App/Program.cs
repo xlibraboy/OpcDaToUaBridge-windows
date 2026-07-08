@@ -271,23 +271,25 @@ app.MapPost("/api/mappings/add", (MappingAddRequest request, MappingStore store)
         return Results.BadRequest(new { error = "Source ID and DA Item ID are required for every mapping." });
     }
 
-    IEnumerable<TagMapping> tags = request.Tags
-        .Select(tag => new TagMapping
-        {
-            SourceId = tag.SourceId,
-            DaItemId = tag.DaItemId,
-            DisplayName = tag.DisplayName ?? string.Empty,
-            Description = tag.Description,
-            DataType = tag.DataType ?? "Auto",
-            UaNodeId = tag.UaNodeId ?? string.Empty,
-            Enabled = tag.Enabled ?? true,
-            Mode = string.IsNullOrWhiteSpace(tag.Mode) ? TagMode.Source : tag.Mode,
-            ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue,
-            PollRateMs = tag.PollRateMs ?? 0,
-            DeadbandPct = tag.DeadbandPct ?? 0f,
-            Writeable = tag.Writeable ?? false,
-            AccessRights = string.IsNullOrWhiteSpace(tag.AccessRights) ? TagAccessRights.Read : tag.AccessRights
-        });
+            IEnumerable<TagMapping> tags = request.Tags
+                .Select(tag => new TagMapping
+                {
+                    SourceId = tag.SourceId,
+                    DaItemId = tag.DaItemId,
+                    ProviderSourceId = tag.ProviderSourceId,
+                    ProviderDaItemId = tag.ProviderDaItemId,
+                    DisplayName = tag.DisplayName ?? string.Empty,
+                    Description = tag.Description,
+                    DataType = tag.DataType ?? "Auto",
+                    UaNodeId = tag.UaNodeId ?? string.Empty,
+                    Enabled = tag.Enabled ?? true,
+                    Mode = string.IsNullOrWhiteSpace(tag.Mode) ? TagMode.Source : tag.Mode,
+                    ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue,
+                    PollRateMs = tag.PollRateMs ?? 0,
+                    DeadbandPct = tag.DeadbandPct ?? 0f,
+                    Writeable = tag.Writeable ?? false,
+                    AccessRights = string.IsNullOrWhiteSpace(tag.AccessRights) ? TagAccessRights.Read : tag.AccessRights
+                });
 
     long version = store.Add(tags);
     return Results.Json(new { version });
@@ -299,27 +301,29 @@ app.MapPost("/api/mappings/bulk-add", (MappingAddRequest request, MappingStore s
         return Results.BadRequest(new { error = "At least one mapping is required." });
     }
 
-    IEnumerable<TagMapping> tags = request.Tags
-        .Select(tag => new TagMapping
-        {
-            SourceId = string.IsNullOrWhiteSpace(tag.SourceId) ? "default" : tag.SourceId,
-            DaItemId = tag.DaItemId ?? string.Empty,
-            Description = tag.Description,
-            DisplayName = tag.DisplayName ?? string.Empty,
-            DataType = tag.DataType ?? "Auto",
-            UaNodeId = tag.UaNodeId ?? string.Empty,
-            Enabled = tag.Enabled ?? true,
-            Mode = string.IsNullOrWhiteSpace(tag.Mode) ? TagMode.Source : tag.Mode,
-            ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue,
-            PollRateMs = tag.PollRateMs ?? 0,
-            Writeable = tag.Writeable ?? false,
-            AccessRights = string.IsNullOrWhiteSpace(tag.AccessRights) ? TagAccessRights.Read : tag.AccessRights
-        })
-        .Where(tag => !string.IsNullOrWhiteSpace(tag.DaItemId));
+            IEnumerable<TagMapping> tags = request.Tags
+                .Select(tag => new TagMapping
+                {
+                    SourceId = string.IsNullOrWhiteSpace(tag.SourceId) ? "default" : tag.SourceId,
+                    DaItemId = tag.DaItemId ?? string.Empty,
+                    ProviderSourceId = tag.ProviderSourceId,
+                    ProviderDaItemId = tag.ProviderDaItemId,
+                    Description = tag.Description,
+                    DisplayName = tag.DisplayName ?? string.Empty,
+                    DataType = tag.DataType ?? "Auto",
+                    UaNodeId = tag.UaNodeId ?? string.Empty,
+                    Enabled = tag.Enabled ?? true,
+                    Mode = string.IsNullOrWhiteSpace(tag.Mode) ? TagMode.Source : tag.Mode,
+                    ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue,
+                    PollRateMs = tag.PollRateMs ?? 0,
+                    Writeable = tag.Writeable ?? false,
+                    AccessRights = string.IsNullOrWhiteSpace(tag.AccessRights) ? TagAccessRights.Read : tag.AccessRights
+                })
+                .Where(tag => !string.IsNullOrWhiteSpace(tag.DaItemId));
 
     long version = store.Add(tags);
     return Results.Json(new { version, received = request.Tags.Count });
-});
+    });
 app.MapPost("/api/mappings/update", (MappingUpdateRequest request, MappingStore store) =>
 {
     if (string.IsNullOrWhiteSpace(request.Tag.SourceId) || string.IsNullOrWhiteSpace(request.Tag.DaItemId))
@@ -327,21 +331,23 @@ app.MapPost("/api/mappings/update", (MappingUpdateRequest request, MappingStore 
         return Results.BadRequest(new { error = "Source ID and DA Item ID are required." });
     }
 
-    TagMapping tag = new()
-    {
-        SourceId = request.Tag.SourceId,
-        DaItemId = request.Tag.DaItemId,
-        DisplayName = request.Tag.DisplayName ?? string.Empty,
-        Description = request.Tag.Description,
-        DataType = request.Tag.DataType ?? "Auto",
-        UaNodeId = request.Tag.UaNodeId ?? string.Empty,
-        Enabled = request.Tag.Enabled ?? true,
-        Mode = string.IsNullOrWhiteSpace(request.Tag.Mode) ? TagMode.Source : request.Tag.Mode,
-        ManualValue = string.IsNullOrWhiteSpace(request.Tag.ManualValue) ? null : request.Tag.ManualValue,
-        PollRateMs = request.Tag.PollRateMs ?? 0,
-        Writeable = request.Tag.Writeable ?? false,
-        AccessRights = string.IsNullOrWhiteSpace(request.Tag.AccessRights) ? TagAccessRights.Read : request.Tag.AccessRights
-    };
+        TagMapping tag = new()
+        {
+            SourceId = request.Tag.SourceId,
+            DaItemId = request.Tag.DaItemId,
+            ProviderSourceId = request.Tag.ProviderSourceId,
+            ProviderDaItemId = request.Tag.ProviderDaItemId,
+            DisplayName = request.Tag.DisplayName ?? string.Empty,
+            Description = request.Tag.Description,
+            DataType = request.Tag.DataType ?? "Auto",
+            UaNodeId = request.Tag.UaNodeId ?? string.Empty,
+            Enabled = request.Tag.Enabled ?? true,
+            Mode = string.IsNullOrWhiteSpace(request.Tag.Mode) ? TagMode.Source : request.Tag.Mode,
+            ManualValue = string.IsNullOrWhiteSpace(request.Tag.ManualValue) ? null : request.Tag.ManualValue,
+            PollRateMs = request.Tag.PollRateMs ?? 0,
+            Writeable = request.Tag.Writeable ?? false,
+            AccessRights = string.IsNullOrWhiteSpace(request.Tag.AccessRights) ? TagAccessRights.Read : request.Tag.AccessRights
+        };
 
     if (!store.TryUpdate(tag, out long version))
     {

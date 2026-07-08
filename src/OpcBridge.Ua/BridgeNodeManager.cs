@@ -193,7 +193,10 @@ internal sealed class BridgeNodeManager : CustomNodeManager2
             NodeId = new NodeId(ToNodeIdentifier(mapping), namespace_index_),
             BrowseName = new QualifiedName(mapping.DisplayName, namespace_index_),
             DisplayName = new LocalizedText(mapping.DisplayName),
-            Description = new LocalizedText($"{mapping.SourceId}:{mapping.DaItemId}"),
+            Description = new LocalizedText(
+                string.IsNullOrEmpty(mapping.ProviderSourceId) || string.IsNullOrEmpty(mapping.ProviderDaItemId)
+                    ? $"{mapping.SourceId}:{mapping.DaItemId}"
+                    : $"{mapping.SourceId}:{mapping.DaItemId} | fed by {mapping.ProviderSourceId}:{mapping.ProviderDaItemId}"),
             WriteMask = writeMask,
             UserWriteMask = writeMask,
             DataType = dataType,

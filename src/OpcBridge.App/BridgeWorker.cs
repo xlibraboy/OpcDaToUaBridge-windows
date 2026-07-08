@@ -240,6 +240,7 @@ public sealed class BridgeWorker : BackgroundService
                     session,
                     sourceReadMappings,
                     manualMappings,
+                    cache,
                     pollerToken).ConfigureAwait(false);
                 cycleTimer.Stop();
 
@@ -324,12 +325,12 @@ public sealed class BridgeWorker : BackgroundService
     {
         return rate_limits_.TryGetValue(rateMs, out int limit) ? limit : 0;
     }
-
     private async Task<SourcePollResult> PollSourceAsync(
         DaSourceRuntimeSettings source,
         SourceSession session,
         IReadOnlyList<TagMapping> sourceReadMappings,
         IReadOnlyList<TagMapping> manualMappings,
+        SourceMappingCache cache,
         CancellationToken cancellationToken)
     {
         int outputValueCount = 0;
@@ -351,6 +352,8 @@ public sealed class BridgeWorker : BackgroundService
                 bridge_state_.SetValue(value);
                 ua_server_.UpdateValue(value);
                 outputValueCount++;
+
+                ForwardToConsumers(value, cache, cancellationToken);
             }
 
             sourceReadSucceeded = true;
@@ -390,8 +393,71 @@ public sealed class BridgeWorker : BackgroundService
             ua_server_.UpdateValue(manualValue);
             updatedCount++;
         }
-
         return updatedCount;
+    }
+
+    /// <summary>
+    /// Forwards a provider tag's value into every enabled consumer that links to it.
+    /// Gated by the provider's AccessRights (must allow Read) and the consumer's AccessRights
+    /// (must allow Write / Read-Write). Cross-source links are supported: the WriteQueue routes
+    /// each request to the consumer's own source session.
+    /// </summary>
+    private void ForwardToConsumers(BridgeValue providerValue, SourceMappingCache cache, CancellationToken cancellationToken)
+    {
+        if (write_queue_ is null)
+        {
+            return;
+        }
+
+        IReadOnlyList<TagMapping> consumers = cache.GetConsumersByProvider(providerValue.SourceId, providerValue.DaItemId);
+        if (consumers.Count == 0)
+        {
+            return;
+        }
+
+        // The provider itself must permit reads for forwarding to make sense.
+        bool providerReadable = false;
+        foreach (TagMapping providerMapping in cache.GetMappings(providerValue.SourceId))
+        {
+            if (string.Equals(providerMapping.DaItemId, providerValue.DaItemId, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(providerMapping.AccessRights, TagAccessRights.Write, StringComparison.OrdinalIgnoreCase))
+            {
+                providerReadable = true;
+                break;
+            }
+        }
+
+        if (!providerReadable)
+        {
+            return;
+        }
+
+        if (!providerValue.IsGood)
+        {
+            // Don't forward bad-quality values into the target.
+            return;
+        }
+
+        for (int i = 0; i < consumers.Count; i++)
+        {
+            TagMapping consumer = consumers[i];
+            if (!consumer.Enabled)
+            {
+                continue;
+            }
+
+            if (!string.Equals(consumer.AccessRights, TagAccessRights.Write, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(consumer.AccessRights, TagAccessRights.ReadWrite, StringComparison.OrdinalIgnoreCase))
+            {
+                // Consumer cannot accept writes; skip.
+                continue;
+            }
+
+            TaskCompletionSource<bool> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            _ = write_queue_.EnqueueAsync(
+                new WriteRequest(consumer.SourceId, consumer.DaItemId, providerValue.Value, tcs),
+                cancellationToken);
+        }
     }
 
     private void ClearReadValues(IReadOnlyList<TagMapping> readMappings)
@@ -716,17 +782,24 @@ public sealed class BridgeWorker : BackgroundService
         private static readonly IReadOnlyList<TagMapping> EmptyMappings = Array.Empty<TagMapping>();
         private readonly Dictionary<string, SourceMappingSet> mappings_by_source_;
         private readonly IReadOnlyList<TagMapping> active_mappings_;
+        // Forward index: provider tag key (SourceId::DaItemId) -> consumers that link to it.
+        private readonly Dictionary<string, IReadOnlyList<TagMapping>> consumers_by_provider_;
 
-        private SourceMappingCache(Dictionary<string, SourceMappingSet> mappingsBySource, IReadOnlyList<TagMapping> activeMappings)
+        private SourceMappingCache(
+            Dictionary<string, SourceMappingSet> mappingsBySource,
+            IReadOnlyList<TagMapping> activeMappings,
+            Dictionary<string, IReadOnlyList<TagMapping>> consumersByProvider)
         {
             mappings_by_source_ = mappingsBySource;
             active_mappings_ = activeMappings;
+            consumers_by_provider_ = consumersByProvider;
         }
 
         public static SourceMappingCache Build(IReadOnlyList<TagMapping> mappings)
         {
             Dictionary<string, List<TagMapping>> groupedMappings = new(StringComparer.OrdinalIgnoreCase);
             List<TagMapping> activeMappings = new(mappings.Count);
+            Dictionary<string, List<TagMapping>> consumersByProvider = new(StringComparer.OrdinalIgnoreCase);
 
             for (int i = 0; i < mappings.Count; i++)
             {
@@ -738,6 +811,17 @@ public sealed class BridgeWorker : BackgroundService
                 }
 
                 sourceMappings.Add(mapping);
+                if (mapping.Enabled && !string.IsNullOrEmpty(mapping.ProviderSourceId) && !string.IsNullOrEmpty(mapping.ProviderDaItemId))
+                {
+                    string providerKey = GetMappingKey(mapping.ProviderSourceId, mapping.ProviderDaItemId);
+                    if (!consumersByProvider.TryGetValue(providerKey, out List<TagMapping>? consumers))
+                    {
+                        consumers = new List<TagMapping>();
+                        consumersByProvider[providerKey] = consumers;
+                    }
+                    consumers.Add(mapping);
+                }
+
                 if (mapping.Enabled)
                 {
                     activeMappings.Add(mapping);
@@ -758,7 +842,10 @@ public sealed class BridgeWorker : BackgroundService
                 frozenMappings[sourceId] = new SourceMappingSet(all, active, sourceRead, manual);
             }
 
-            return new SourceMappingCache(frozenMappings, activeMappings.ToArray());
+            Dictionary<string, IReadOnlyList<TagMapping>> frozenConsumers = consumersByProvider
+                .ToDictionary(kvp => kvp.Key, kvp => (IReadOnlyList<TagMapping>)kvp.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
+
+            return new SourceMappingCache(frozenMappings, activeMappings.ToArray(), frozenConsumers);
         }
 
         public IReadOnlyList<TagMapping> GetActiveMappings()
@@ -813,6 +900,21 @@ public sealed class BridgeWorker : BackgroundService
             return mappings.SourceRead
                 .Where(m => (m.PollRateMs > 0 ? m.PollRateMs : defaultRate) == rate)
                 .ToArray();
+        }
+        /// <summary>
+        /// Returns the consumer tags linked to the given provider tag (SourceId::DaItemId).
+        /// Empty when nothing links to it. Used to forward a provider's value into its consumers.
+        /// </summary>
+        public IReadOnlyList<TagMapping> GetConsumersByProvider(string providerSourceId, string providerDaItemId)
+        {
+            return consumers_by_provider_.TryGetValue(GetMappingKey(providerSourceId, providerDaItemId), out IReadOnlyList<TagMapping>? consumers)
+                ? consumers
+                : EmptyMappings;
+        }
+
+        private static string GetMappingKey(string sourceId, string daItemId)
+        {
+            return string.Concat(sourceId.Trim(), "::", daItemId.Trim());
         }
     }
 
