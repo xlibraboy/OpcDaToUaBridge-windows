@@ -40,6 +40,24 @@ public sealed class OpcDaClient : IDaClient
         return com_thread_?.GetStats();
     }
 
+    [SupportedOSPlatform("windows")]
+    public bool TryGetTagMetadata(string daItemId, out short? canonicalDataType, out int? accessRights)
+    {
+        canonicalDataType = null;
+        accessRights = null;
+
+        if (!OperatingSystem.IsWindows() || com_thread_ is null || string.IsNullOrWhiteSpace(daItemId))
+        {
+            return false;
+        }
+
+        (bool found, short? canonicalType, int? rights) = com_thread_.EnqueueAndWait(
+            () => TryGetTagMetadataOnStaThread(daItemId.Trim()));
+        canonicalDataType = canonicalType;
+        accessRights = rights;
+        return found;
+    }
+
     public Task ConnectAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -723,6 +741,112 @@ public sealed class OpcDaClient : IDaClient
         if (server_ is null)
         {
             throw new InvalidOperationException("OPC DA client is not connected.");
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private (bool Found, short? CanonicalDataType, int? AccessRights) TryGetTagMetadataOnStaThread(string daItemId)
+    {
+        EnsureConnected();
+
+        Guid itemManagementGuid = typeof(IOPCItemMgt).GUID;
+        object? groupObject = null;
+        int serverGroupHandle = 0;
+
+        try
+        {
+            int addGroupHresult = server_!.AddGroup(
+                "OpcBridge_MetadataLookup",
+                0,
+                1000,
+                0,
+                IntPtr.Zero,
+                IntPtr.Zero,
+                0,
+                out serverGroupHandle,
+                out _,
+                ref itemManagementGuid,
+                out groupObject);
+            ThrowOnFailed(addGroupHresult, $"Failed to create OPC DA group for metadata lookup '{daItemId}'.");
+
+            if (groupObject is not IOPCItemMgt itemManagement)
+            {
+                return (false, null, null);
+            }
+
+            OpcItemDefinition[] definitions =
+            [
+                new OpcItemDefinition
+                {
+                    AccessPath = string.Empty,
+                    ItemId = daItemId,
+                    IsActive = 0,
+                    ClientHandle = 1,
+                    RequestedDataType = 0
+                }
+            ];
+
+            IntPtr resultsPointer = IntPtr.Zero;
+            IntPtr errorsPointer = IntPtr.Zero;
+            int serverHandle = 0;
+
+            try
+            {
+                int addItemsHresult = itemManagement.AddItems(definitions.Length, definitions, out resultsPointer, out errorsPointer);
+                ThrowOnFailed(addItemsHresult, $"Failed to add OPC DA item '{daItemId}' for metadata lookup.");
+
+                int[] itemErrors = new int[definitions.Length];
+                Marshal.Copy(errorsPointer, itemErrors, 0, definitions.Length);
+                ThrowOnFailed(itemErrors[0], $"Failed to resolve OPC DA item '{daItemId}' for metadata lookup.");
+
+                OpcItemResult result = Marshal.PtrToStructure<OpcItemResult>(resultsPointer);
+                if (result.BlobPointer != IntPtr.Zero)
+                {
+                    Marshal.FreeCoTaskMem(result.BlobPointer);
+                }
+
+                serverHandle = result.ServerHandle;
+                return (true, result.CanonicalDataType, result.AccessRights);
+            }
+            finally
+            {
+                if (serverHandle != 0)
+                {
+                    RemoveItems(itemManagement, [serverHandle]);
+                }
+
+                if (errorsPointer != IntPtr.Zero)
+                {
+                    Marshal.FreeCoTaskMem(errorsPointer);
+                }
+
+                if (resultsPointer != IntPtr.Zero)
+                {
+                    Marshal.FreeCoTaskMem(resultsPointer);
+                }
+            }
+        }
+        catch
+        {
+            return (false, null, null);
+        }
+        finally
+        {
+            if (groupObject is not null)
+            {
+                ReleaseComObject(ref groupObject);
+            }
+
+            if (server_ is not null && serverGroupHandle != 0)
+            {
+                try
+                {
+                    server_.RemoveGroup(serverGroupHandle, 0);
+                }
+                catch
+                {
+                }
+            }
         }
     }
 

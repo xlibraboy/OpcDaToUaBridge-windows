@@ -10,7 +10,7 @@ using OpcBridge.Ua;
 
 namespace OpcBridge.App;
 
-public sealed class BridgeWorker : BackgroundService
+public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
 {
     private const int CoordinatorTickMs = 200;
 
@@ -590,6 +590,37 @@ public sealed class BridgeWorker : BackgroundService
                 estimatedBytesPerSec = notificationsPerSec * 80.0
             }
         };
+    }
+
+    public bool TryResolve(string sourceId, string itemId, out DaTagMetadata metadata)
+    {
+        metadata = new DaTagMetadata(null, null);
+
+        Dictionary<string, SourceSession>? sessions = active_sessions_;
+        if (sessions is null || string.IsNullOrWhiteSpace(itemId))
+        {
+            return false;
+        }
+
+        string normalizedSourceId = NormalizeSourceId(sourceId);
+        if (!sessions.TryGetValue(normalizedSourceId, out SourceSession? session))
+        {
+            return false;
+        }
+
+        if (!session.Client.TryGetTagMetadata(itemId.Trim(), out short? canonicalDataType, out int? accessRights))
+        {
+            return false;
+        }
+
+        metadata = new DaTagMetadata(canonicalDataType, accessRights);
+        return true;
+    }
+
+    private static string NormalizeSourceId(string? sourceId)
+    {
+        string value = sourceId?.Trim() ?? string.Empty;
+        return value.Length == 0 ? DaRuntimeSettings.DefaultSourceId : value;
     }
 
 

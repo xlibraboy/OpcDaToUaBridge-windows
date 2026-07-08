@@ -11,4 +11,6 @@ public interface IDaClient : IAsyncDisposable
         CancellationToken cancellationToken);
 
     Task<bool> WriteAsync(string daItemId, object? value, CancellationToken cancellationToken);
+
+    bool TryGetTagMetadata(string daItemId, out short? canonicalDataType, out int? accessRights);
 }

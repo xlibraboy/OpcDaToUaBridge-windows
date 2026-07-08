@@ -44,5 +44,12 @@ public sealed class MockDaClient : IDaClient
         return Task.FromResult(value is not null);
     }
 
+    public bool TryGetTagMetadata(string daItemId, out short? canonicalDataType, out int? accessRights)
+    {
+        canonicalDataType = 5;
+        accessRights = 3;
+        return !string.IsNullOrWhiteSpace(daItemId);
+    }
+
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }
