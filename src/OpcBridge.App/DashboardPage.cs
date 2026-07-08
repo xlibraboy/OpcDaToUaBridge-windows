@@ -235,6 +235,7 @@ internal static class DashboardPage
     <button class="tabbtn" data-tab="connection" onclick="showTab('connection')">Connection</button>
     <button class="tabbtn" data-tab="diagnostics" onclick="showTab('diagnostics')">Diagnostics</button>
     <button class="tabbtn" data-tab="tags" onclick="showTab('tags')">Tags</button>
+    <button class="tabbtn" data-tab="links" onclick="showTab('links')">Links</button>
     <button class="tabbtn" data-tab="logs" onclick="showTab('logs')">Logs</button>
     <button class="tabbtn" data-tab="help" onclick="showTab('help')">Help</button>
     <button class="tabbtn" data-tab="about" onclick="showTab('about')">About</button>
@@ -462,6 +463,23 @@ internal static class DashboardPage
         </div>
     </div>
 </div>
+<div class="view" id="view-links">
+    <div class="box">
+        <div class="box-h">Connected Tags <span class="msg" id="linksCount" style="margin-left:auto"></span></div>
+        <div class="box-b">
+            <div class="hint" id="linksMessage" style="margin-bottom:10px">A connected tag (consumer) receives values from another tag (provider) in addition to its own DA source. Set up links from a tag's faceplate → Setup → Provider, or pick a consumer and provider below.</div>
+            <div class="mapping-toolbar" style="margin-bottom:10px">
+                <label class="fl" style="width:auto">Consumer</label>
+                <select id="linkConsumerSelect" style="flex:1;min-width:120px"></select>
+                <label class="fl" style="width:auto">Provider</label>
+                <select id="linkProviderSelect" style="flex:1;min-width:120px"></select>
+                <button class="btn" type="button" id="btnSetLink">Set Link</button>
+                <button class="btn ghost" type="button" id="btnClearLink">Clear Link</button>
+            </div>
+            <div class="list" id="linksList"></div>
+        </div>
+    </div>
+</div>
 <div class="modal-overlay" id="faceplateOverlay" onclick="if(event.target===this)closeFaceplate()">
     <div class="modal">
         <div class="modal-h">
@@ -486,6 +504,8 @@ internal static class DashboardPage
                 <div class="field"><label class="fl">Enabled</label><input type="checkbox" id="fpEnabled" data-action="toggle-tag-enabled"></div>
                 <div class="field"><label class="fl">Update Rate</label><select id="fpPollRate" data-action="tag-poll-rate"><option value="0">Source Default</option><option value="100">100 ms</option><option value="250">250 ms</option><option value="500">500 ms</option><option value="1000">1 s</option><option value="2000">2 s</option><option value="5000">5 s</option><option value="10000">10 s</option></select></div>
                 <div class="field"><label class="fl">Deadband %</label><input type="number" id="fpDeadband" min="0" max="100" step="0.1" value="0" style="width:80px"></div>
+                <div class="field"><label class="fl">Provider</label><select id="fpProvider" data-action="tag-provider" style="flex:1"></select></div>
+                <div class="hint" style="margin-top:2px">Optional: another tag that feeds this tag's value. Pick "— none —" to remove an existing link. Provider must allow Read; consumer must allow Write.</div>
                 <div class="hint" style="margin-top:4px">Update Rate = DA group interval. With subscriptions on, the DA server pushes changes at this rate. With subscriptions off, the bridge polls at this rate.</div>
             </div>
             <div class="fp-tabpane" id="fp-pane-sim" style="display:none">
@@ -598,6 +618,14 @@ const state = {
 function valueKey(sourceId, itemId) {
     return (sourceId || 'default') + '\u0000' + (itemId || '');
 }
+function tagKey(sourceId, itemId) {
+    return (sourceId || 'default') + '||' + (itemId || '');
+}
+function parseTagKey(key) {
+    const idx = key.indexOf('||');
+    if (idx < 0) return [key, ''];
+    return [key.substring(0, idx), key.substring(idx + 2)];
+}
 
 function currentValue(sourceId, itemId) {
     return state.valuesByKey.get(valueKey(sourceId, itemId)) || null;
@@ -612,6 +640,60 @@ function renderLiveValue(value) {
     return `<div class="fp-k">Real value</div><div class="fp-v mono" title="${attr(text)}">${esc(text)}</div><div class="fp-meta"><span>${badge(isGood ? 'Good' : 'Bad', isGood ? 'good' : 'bad')} <span class="${isGood ? 'good' : 'bad'}">(${esc(String(quality ?? '—'))})</span></span><span class="timestamp">${esc(timestamp)}</span></div>`;
 }
 
+function renderLinksView() {
+    const mappings = state.mappings || [];
+    const tagLabel = m => {
+        const ms = m.sourceId || m.SourceId || 'default';
+        const mi = m.daItemId || m.DaItemId;
+        const mn = m.displayName || m.DisplayName || mi;
+        return `${esc(mn)} (${esc(ms)} · ${esc(mi)})`;
+    };
+    // Populate consumer + provider dropdowns (all tags)
+    const opts = '<option value="">— select —</option>' + mappings.map(m => {
+        const key = tagKey(m.sourceId || m.SourceId || 'default', m.daItemId || m.DaItemId);
+        return `<option value="${attr(key)}">${tagLabel(m)}</option>`;
+    }).join('');
+    el('linkConsumerSelect').innerHTML = opts;
+    el('linkProviderSelect').innerHTML = opts;
+    // Render existing links
+    const linked = mappings.filter(m => {
+        const ps = m.providerSourceId || m.ProviderSourceId || '';
+        return !!ps;
+    });
+    el('linksCount').textContent = linked.length ? linked.length + (linked.length === 1 ? ' link' : ' links') : 'No links';
+    el('linksList').innerHTML = linked.length ? linked.map(m => {
+        const cSrc = m.sourceId || m.SourceId || 'default';
+        const cItem = m.daItemId || m.DaItemId;
+        const cName = m.displayName || m.DisplayName || cItem;
+        const pSrc = m.providerSourceId || m.ProviderSourceId || '';
+        const pItem = m.providerDaItemId || m.ProviderDaItemId || '';
+        const pMap = getMapping(pSrc, pItem);
+        const pName = pMap ? (pMap.displayName || pMap.DisplayName || pItem) : pItem;
+        return `<div class="li"><div style="flex:1;min-width:0"><span class="n">${esc(cName)}</span> <span class="p">${esc(cSrc)} · ${esc(cItem)}</span></div><span class="pill" style="padding:1px 6px;font-size:10px;background:#e8f0fe;color:#1a73e8">⇠ fed by</span><div style="flex:1;min-width:0"><span class="n">${esc(pName)}</span> <span class="p">${esc(pSrc)} · ${esc(pItem)}</span></div><button class="btn ghost" type="button" data-action="unlink" data-source-id="${attr(cSrc)}" data-item-id="${attr(cItem)}">Unlink</button></div>`;
+    }).join('') : '<span class="msg">No connected tags. Set one up above or from a tag faceplate.</span>';
+}
+async function setLink(consumerKey, providerKey) {
+    if (!consumerKey || !providerKey) { el('linksMessage').textContent = 'Pick both a consumer and a provider.'; return; }
+    if (consumerKey === providerKey) { el('linksMessage').textContent = '✗ A tag cannot link to itself.'; return; }
+    const [cSrc, cItem] = parseTagKey(consumerKey);
+    await updateMapping(cSrc, cItem, payload => {
+        const [pSrc, pItem] = parseTagKey(providerKey);
+        payload.providerSourceId = pSrc || null;
+        payload.providerDaItemId = pItem || null;
+    });
+    el('linksMessage').textContent = '✓ Link set.';
+    renderLinksView();
+}
+async function clearLink(consumerKey) {
+    if (!consumerKey) { el('linksMessage').textContent = 'Pick a consumer to clear.'; return; }
+    const [cSrc, cItem] = parseTagKey(consumerKey);
+    await updateMapping(cSrc, cItem, payload => {
+        payload.providerSourceId = null;
+        payload.providerDaItemId = null;
+    });
+    el('linksMessage').textContent = '✓ Link cleared.';
+    renderLinksView();
+}
 function renderMappingRow(mapping) {
     const sourceId = mapping.sourceId || mapping.SourceId || 'default';
     const item = mapping.daItemId || mapping.DaItemId;
@@ -629,9 +711,12 @@ function renderMappingRow(mapping) {
     else { accessBadge = badge(access + (simulated && access !== 'Write' ? ' / Sim' : ''), access === 'Read' ? 'good' : access === 'Read-Write' ? 'partial' : 'warn'); }
     const rateBadge = pollRate > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">${pollRate}ms</span>` : '';
     const deadbandBadge = deadband > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">db ${deadband}%</span>` : '';
+    const provSrc = mapping.providerSourceId || mapping.ProviderSourceId || '';
+    const provItem = mapping.providerDaItemId || mapping.ProviderDaItemId || '';
+    const fedBadge = provSrc ? `<span class="pill" style="padding:1px 6px;font-size:10px;background:#e8f0fe;color:#1a73e8" title="Fed by ${esc(provSrc)} · ${esc(provItem)}">⇠ fed</span>` : '';
     const desc = (mapping.description || mapping.Description || '').trim();
     const descIcon = desc ? `<span class="li-desc" title="${attr(desc)}" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">&#8505;</span>` : '';
-    return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">${descIcon}<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="n">${esc(name)}</span> <span class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</span></div><div class="li-badge">${accessBadge}${deadbandBadge}${rateBadge}</div></div>`;
+    return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">${descIcon}<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="n">${esc(name)}</span> <span class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</span></div><div class="li-badge">${accessBadge}${fedBadge}${deadbandBadge}${rateBadge}</div></div>`;
 }
 
 function renderMappingRows(mappings) {
@@ -667,6 +752,20 @@ function openFaceplate(sourceId, itemId) {
     el('fpPollRate').value = String(pollRate);
     const deadband = Number(mapping.deadbandPct ?? mapping.DeadbandPct ?? 0);
     el('fpDeadband').value = String(deadband);
+    const providerSel = el('fpProvider');
+    const currentProvSrc = mapping.providerSourceId || mapping.ProviderSourceId || '';
+    const currentProvItem = mapping.providerDaItemId || mapping.ProviderDaItemId || '';
+    const currentProvKey = currentProvSrc ? tagKey(currentProvSrc, currentProvItem) : '';
+    providerSel.innerHTML = '<option value="">— none —</option>' + (state.mappings || [])
+        .filter(m => tagKey(m.sourceId || m.SourceId || 'default', m.daItemId || m.DaItemId) !== tagKey(sourceId, itemId))
+        .map(m => {
+            const ms = m.sourceId || m.SourceId || 'default';
+            const mi = m.daItemId || m.DaItemId;
+            const mn = m.displayName || m.DisplayName || mi;
+            const key = tagKey(ms, mi);
+            const sel = key === currentProvKey ? ' selected' : '';
+            return `<option value="${attr(key)}"${sel}>${esc(mn)} (${esc(ms)} · ${esc(mi)})</option>`;
+        }).join('');
     updateManualInputState();
     el('fpApply').dataset.sourceId = sourceId;
     el('fpApply').dataset.itemId = itemId;
@@ -723,6 +822,7 @@ function showTab(name) {
     else { diagnosticsActive = false; }
     if (name === 'about') loadAppInfo().catch(e => el('aboutName').textContent = '✗ ' + e.message);
     if (name === 'help') loadHelp().catch(e => el('helpContent').innerHTML = '<span class="msg bad">✗ ' + esc(e.message) + '</span>');
+    if (name === 'links') renderLinksView();
 }
 function badge(t, c) { return `<span class="badge ${c}">${esc(t)}</span>`; }
 function stateClass(v) {
@@ -1193,8 +1293,8 @@ async function loadMappings() {
     const mappings = p.mappings || [];
     state.mappings = mappings;
     const view = applyMappingView(mappings);
-    el('mapCount').textContent = view.length + (view.length !== mappings.length ? ' / ' + mappings.length + ' mappings' : ' mappings');
     el('mappedList').innerHTML = renderMappingRows(view);
+    if (document.getElementById('view-links')?.classList.contains('active')) renderLinksView();
 }
 function applyMappingView(mappings) {
     const filter = (state.mappingFilter || '').trim().toLowerCase();
@@ -1267,7 +1367,9 @@ async function updateMapping(sourceId, itemId, mutate) {
         pollRateMs: mapping.pollRateMs ?? mapping.PollRateMs ?? 0,
         deadbandPct: Number(mapping.deadbandPct ?? mapping.DeadbandPct ?? 0),
         writeable: (mapping.writeable ?? mapping.Writeable) === true,
-        accessRights: mapping.accessRights || mapping.AccessRights || 'Read'
+        accessRights: mapping.accessRights || mapping.AccessRights || 'Read',
+        providerSourceId: mapping.providerSourceId || mapping.ProviderSourceId || null,
+        providerDaItemId: mapping.providerDaItemId || mapping.ProviderDaItemId || null
     };
     mutate(payload);
     const r = await fetch('/api/mappings/update', {
@@ -1555,6 +1657,15 @@ function bindDynamicButtons() {
                 payload.pollRateMs = Number.parseInt(el('fpPollRate').value, 10) || 0;
                 payload.deadbandPct = Math.max(0, Math.min(100, Number.parseFloat(el('fpDeadband').value) || 0));
                 payload.description = el('fpDescription').value.trim() || null;
+                const provVal = el('fpProvider').value;
+                if (provVal) {
+                    const [pSrc, pItem] = parseTagKey(provVal);
+                    payload.providerSourceId = pSrc || null;
+                    payload.providerDaItemId = pItem || null;
+                } else {
+                    payload.providerSourceId = null;
+                    payload.providerDaItemId = null;
+                }
                 if (simulated) {
                     payload.mode = 'Manual';
                     const manualField = el('fpManualInput');
@@ -1669,9 +1780,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         state.logsLoaded = false;
         loadLogs(true).catch(e => el('logMessage').textContent = '✗ ' + e.message);
     });
+    el('btnSetLink').addEventListener('click', () => setLink(el('linkConsumerSelect').value, el('linkProviderSelect').value).catch(e => el('linksMessage').textContent = '✗ ' + e.message));
+    el('btnClearLink').addEventListener('click', () => clearLink(el('linkConsumerSelect').value).catch(e => el('linksMessage').textContent = '✗ ' + e.message));
+    el('linksList').addEventListener('click', event => {
+        const btn = event.target.closest('button[data-action="unlink"]');
+        if (!btn) return;
+        clearLink(tagKey(btn.dataset.sourceId || '', btn.dataset.itemId || '')).catch(e => el('linksMessage').textContent = '✗ ' + e.message);
+    });
     bindDynamicButtons();
     const initTab = location.hash.slice(1);
-    if (['monitor','connection','diagnostics','tags','logs','help','about'].includes(initTab)) showTab(initTab);
+    if (['monitor','connection','diagnostics','tags','links','logs','help','about'].includes(initTab)) showTab(initTab);
     await loadSources();
     await loadMappings();
     updateLiveValuesUi();
