@@ -15,6 +15,8 @@ public sealed class TagMapping
     public float DeadbandPct { get; set; }
     public bool Writeable { get; set; }
     public string AccessRights { get; set; } = TagAccessRights.Read;
+    public bool MqttEnabled { get; set; }
+    public string? MqttTopic { get; set; }
 }
 
 public static class TagMode
