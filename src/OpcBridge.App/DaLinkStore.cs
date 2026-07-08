@@ -35,6 +35,7 @@ public sealed class DaLinkStore
         lock (sync_)
         {
             List<DaLinkRule> normalized = new();
+            HashSet<Guid> ids = new();
             HashSet<(string SourceId, string ItemId)> consumers = new(ConsumerKeyComparer.Instance);
 
             foreach (DaLinkRule rule in rules)
@@ -42,6 +43,11 @@ public sealed class DaLinkStore
                 if (!TryNormalize(rule, out DaLinkRule normalizedRule, out string? error))
                 {
                     throw new InvalidOperationException(error);
+                }
+
+                if (!ids.Add(normalizedRule.Id))
+                {
+                    throw new InvalidOperationException("Rule already exists.");
                 }
 
                 if (!consumers.Add((normalizedRule.ConsumerSourceId, normalizedRule.ConsumerItemId)))
@@ -156,10 +162,12 @@ public sealed class DaLinkStore
                 continue;
             }
 
-            if (TryAdd(rule, out _, out _))
+            if (!TryAdd(rule, out _, out string? error))
             {
-                migrated++;
+                throw new InvalidOperationException(error);
             }
+
+            migrated++;
         }
 
         return migrated;
@@ -231,6 +239,13 @@ public sealed class DaLinkStore
         {
             normalized = default!;
             error = "Provider and consumer cannot be the same item.";
+            return false;
+        }
+
+        if (rule.ProviderCanonicalType != rule.ConsumerCanonicalType)
+        {
+            normalized = default!;
+            error = "Provider and consumer must use the same native OPC DA type.";
             return false;
         }
 
