@@ -4,6 +4,7 @@
     <ProjectReference Include="..\OpcBridge.Core\OpcBridge.Core.csproj" />
     <ProjectReference Include="..\OpcBridge.Da\OpcBridge.Da.csproj" />
     <ProjectReference Include="..\OpcBridge.Ua\OpcBridge.Ua.csproj" />
+    <ProjectReference Include="..\OpcBridge.Mqtt\OpcBridge.Mqtt.csproj" />
   </ItemGroup>
 
   <ItemGroup>
