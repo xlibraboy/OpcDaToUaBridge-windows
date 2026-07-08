@@ -197,7 +197,9 @@ public sealed class MappingStore
             PollRateMs = Math.Max(0, tag.PollRateMs),
             DeadbandPct = Math.Clamp(tag.DeadbandPct, 0f, 100f),
             Writeable = writeable,
-            AccessRights = accessRights
+            AccessRights = accessRights,
+            MqttEnabled = tag.MqttEnabled,
+            MqttTopic = string.IsNullOrWhiteSpace(tag.MqttTopic) ? null : tag.MqttTopic.Trim()
         };
     }
 
