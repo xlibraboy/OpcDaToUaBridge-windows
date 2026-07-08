@@ -236,6 +236,7 @@ internal static class DashboardPage
     <button class="tabbtn" data-tab="diagnostics" onclick="showTab('diagnostics')">Diagnostics</button>
     <button class="tabbtn" data-tab="tags" onclick="showTab('tags')">Tags</button>
     <button class="tabbtn" data-tab="logs" onclick="showTab('logs')">Logs</button>
+    <button class="tabbtn" data-tab="mqtt" onclick="showTab('mqtt')">MQTT</button>
     <button class="tabbtn" data-tab="help" onclick="showTab('help')">Help</button>
     <button class="tabbtn" data-tab="about" onclick="showTab('about')">About</button>
 </div>
@@ -481,6 +482,8 @@ internal static class DashboardPage
                 <div class="field"><label class="fl">Enabled</label><input type="checkbox" id="fpEnabled" data-action="toggle-tag-enabled"></div>
                 <div class="field"><label class="fl">Update Rate</label><select id="fpPollRate" data-action="tag-poll-rate"><option value="0">Source Default</option><option value="100">100 ms</option><option value="250">250 ms</option><option value="500">500 ms</option><option value="1000">1 s</option><option value="2000">2 s</option><option value="5000">5 s</option><option value="10000">10 s</option></select></div>
                 <div class="field"><label class="fl">Deadband %</label><input type="number" id="fpDeadband" min="0" max="100" step="0.1" value="0" style="width:80px"></div>
+                <div class="field"><label class="fl">MQTT</label><input type="checkbox" id="fpMqttEnabled"> <span class="msg">publish/subscribe this tag</span></div>
+                <div class="field"><label class="fl">MQTT Topic</label><input type="text" id="fpMqttTopic" placeholder="override topic (optional)"></div>
                 <div class="hint" style="margin-top:4px">Update Rate = DA group interval. With subscriptions on, the DA server pushes changes at this rate. With subscriptions off, the bridge polls at this rate.</div>
             </div>
             <div class="fp-tabpane" id="fp-pane-sim" style="display:none">
@@ -541,6 +544,49 @@ internal static class DashboardPage
                 <div class="k">Creator</div><div class="v" id="aboutCreator">—</div>
             </div>
         </div>
+    </div>
+</div>
+<div class="view" id="view-mqtt">
+    <div class="grid2">
+        <div class="box">
+            <div class="box-h">MQTT Broker</div>
+            <div class="box-b">
+                <div class="field"><label class="fl">Enabled</label><input type="checkbox" id="mqttEnabled"></div>
+                <div class="field"><label class="fl">Broker URL</label><input type="text" id="mqttBrokerUrl" placeholder="tcp://localhost:1883"></div>
+                <div class="field"><label class="fl">Client ID</label><input type="text" id="mqttClientId"></div>
+                <div class="field"><label class="fl">Username</label><input type="text" id="mqttUser"></div>
+                <div class="field"><label class="fl">Password</label><input type="password" id="mqttPass"></div>
+                <div class="field"><label class="fl">TLS</label><input type="checkbox" id="mqttTls"></div>
+                <div class="field"><label class="fl">Ignore Cert</label><input type="checkbox" id="mqttIgnoreCert"></div>
+                <div class="field"><label class="fl">Topic Prefix</label><input type="text" id="mqttPrefix" placeholder="bridge/tags"></div>
+                <div class="field"><label class="fl">Payload Fields</label>
+                    <select id="mqttFields">
+                        <option>Value, Timestamp</option>
+                        <option>Value, Timestamp, Quality</option>
+                        <option>Value, Timestamp, Quality, SourceId, ItemId</option>
+                        <option>Value, Timestamp, SourceId, ItemId, DisplayName, DataType</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <button class="btn" onclick="saveMqtt()">Save Config</button>
+                    <button class="btn ghost" onclick="connectMqtt()">Connect</button>
+                    <button class="btn ghost" onclick="disconnectMqtt()">Disconnect</button>
+                </div>
+                <div class="msg" id="mqttMessage"></div>
+            </div>
+        </div>
+        <div class="box">
+            <div class="box-h">Connection</div>
+            <div class="box-b">
+                <div class="stat"><div class="k">State</div><div class="v" id="mqttState">Disconnected</div><div class="s" id="mqttLastError">No errors</div></div>
+                <div class="stat"><div class="k">Published</div><div class="v" id="mqttPublished">0</div></div>
+                <div class="stat"><div class="k">Received</div><div class="v" id="mqttReceived">0</div></div>
+            </div>
+        </div>
+    </div>
+    <div class="box" style="margin-top:14px">
+        <div class="box-h">Traffic Monitor <span class="msg" style="margin-left:auto"><button class="btn ghost" onclick="loadMqttLogs()">Refresh</button></span></div>
+        <div class="box-b"><div class="list" id="mqttTraffic"><span class="msg">No MQTT traffic yet.</span></div></div>
     </div>
 </div>
 </div>
@@ -624,9 +670,11 @@ function renderMappingRow(mapping) {
     else { accessBadge = badge(access + (simulated && access !== 'Write' ? ' / Sim' : ''), access === 'Read' ? 'good' : access === 'Read-Write' ? 'partial' : 'warn'); }
     const rateBadge = pollRate > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">${pollRate}ms</span>` : '';
     const deadbandBadge = deadband > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">db ${deadband}%</span>` : '';
+    const mqttOn = (mapping.mqttEnabled ?? mapping.MqttEnabled) === true;
+    const mqttBadge = mqttOn ? `<span class="pill" style="padding:1px 6px;font-size:10px">MQTT</span>` : '';
     const desc = (mapping.description || mapping.Description || '').trim();
     const descIcon = desc ? `<span class="li-desc" title="${attr(desc)}" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">&#8505;</span>` : '';
-    return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">${descIcon}<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="n">${esc(name)}</span> <span class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</span></div><div class="li-badge">${accessBadge}${deadbandBadge}${rateBadge}</div></div>`;
+    return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">${descIcon}<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="n">${esc(name)}</span> <span class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</span></div><div class="li-badge">${accessBadge}${deadbandBadge}${rateBadge}${mqttBadge}</div></div>`;
 }
 
 function renderMappingRows(mappings) {
@@ -662,6 +710,8 @@ function openFaceplate(sourceId, itemId) {
     el('fpPollRate').value = String(pollRate);
     const deadband = Number(mapping.deadbandPct ?? mapping.DeadbandPct ?? 0);
     el('fpDeadband').value = String(deadband);
+    el('fpMqttEnabled').checked = (mapping.mqttEnabled ?? mapping.MqttEnabled) === true;
+    el('fpMqttTopic').value = String(mapping.mqttTopic ?? mapping.MqttTopic ?? '');
     updateManualInputState();
     el('fpApply').dataset.sourceId = sourceId;
     el('fpApply').dataset.itemId = itemId;
@@ -718,6 +768,7 @@ function showTab(name) {
     else { diagnosticsActive = false; }
     if (name === 'about') loadAppInfo().catch(e => el('aboutName').textContent = '✗ ' + e.message);
     if (name === 'help') loadHelp().catch(e => el('helpContent').innerHTML = '<span class="msg bad">✗ ' + esc(e.message) + '</span>');
+    if (name === 'mqtt') { await loadMqtt(); await loadMqttLogs(); }
 }
 function badge(t, c) { return `<span class="badge ${c}">${esc(t)}</span>`; }
 function stateClass(v) {
@@ -1190,6 +1241,66 @@ async function loadMappings() {
     el('mapCount').textContent = view.length + (view.length !== mappings.length ? ' / ' + mappings.length + ' mappings' : ' mappings');
     el('mappedList').innerHTML = renderMappingRows(view);
 }
+async function loadMqtt() {
+    try {
+        const cfg = await (await fetch('/api/mqtt/config', { cache: 'no-store' })).json();
+        el('mqttEnabled').checked = !!cfg.enabled;
+        el('mqttBrokerUrl').value = cfg.brokerUrl || '';
+        el('mqttClientId').value = cfg.clientId || '';
+        el('mqttUser').value = cfg.userName || '';
+        el('mqttPass').value = cfg.password || '';
+        el('mqttTls').checked = !!cfg.tls;
+        el('mqttIgnoreCert').checked = !!cfg.ignoreCertErrors;
+        el('mqttPrefix').value = cfg.topicPrefix || 'bridge/tags';
+        el('mqttFields').value = cfg.payloadFields || 'Value, Timestamp';
+        const st = await (await fetch('/api/mqtt/status', { cache: 'no-store' })).json();
+        el('mqttState').textContent = st.state || 'Disconnected';
+        el('mqttState').className = 'v ' + (st.state === 'Connected' ? 'badge good' : 'badge bad');
+        el('mqttLastError').textContent = st.lastError || 'No errors';
+        el('mqttPublished').textContent = String(st.publishedCount || 0);
+        el('mqttReceived').textContent = String(st.receivedCount || 0);
+    } catch (e) { el('mqttMessage').textContent = '✗ ' + e.message; }
+}
+async function saveMqtt() {
+    const body = {
+        enabled: el('mqttEnabled').checked,
+        brokerUrl: el('mqttBrokerUrl').value.trim(),
+        clientId: el('mqttClientId').value.trim(),
+        userName: el('mqttUser').value.trim() || null,
+        password: el('mqttPass').value || null,
+        tls: el('mqttTls').checked,
+        ignoreCertErrors: el('mqttIgnoreCert').checked,
+        topicPrefix: el('mqttPrefix').value.trim(),
+        payloadFields: el('mqttFields').value.trim()
+    };
+    const r = await fetch('/api/mqtt/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const p = await r.json();
+    el('mqttMessage').textContent = p.status === 'ok' ? 'MQTT config saved.' : ('✗ ' + (p.error || 'save failed'));
+    await loadMqtt();
+}
+async function connectMqtt() {
+    el('mqttMessage').textContent = 'Connecting...';
+    const r = await fetch('/api/mqtt/connect', { method: 'POST' });
+    const p = await r.json();
+    el('mqttMessage').textContent = p.status === 'ok' ? 'Connected.' : ('✗ ' + (p.error || 'connect failed'));
+    await loadMqtt();
+}
+async function disconnectMqtt() {
+    await fetch('/api/mqtt/disconnect', { method: 'POST' });
+    el('mqttMessage').textContent = 'Disconnected.';
+    await loadMqtt();
+}
+async function loadMqttLogs() {
+    try {
+        const p = await (await fetch('/api/mqtt/logs?limit=200', { cache: 'no-store' })).json();
+        el('mqttTraffic').innerHTML = (p.entries || []).map(e =>
+            `<div class="li"><span class="badge ${e.direction === 'PUB' ? 'good' : 'partial'}">${esc(e.direction)}</span>` +
+            `<span class="mono">${esc(e.topic)}</span>` +
+            `<span class="p">${esc(e.detail || '')}</span>` +
+            `<span class="s">${esc(new Date(e.timestampUtc).toLocaleTimeString())}</span></div>`).join('') ||
+            '<span class="msg">No MQTT traffic yet.</span>';
+    } catch (e) { el('mqttTraffic').innerHTML = '<span class="msg">✗ ' + esc(e.message) + '</span>'; }
+}
 function applyMappingView(mappings) {
     const filter = (state.mappingFilter || '').trim().toLowerCase();
     let view = mappings;
@@ -1261,7 +1372,9 @@ async function updateMapping(sourceId, itemId, mutate) {
         pollRateMs: mapping.pollRateMs ?? mapping.PollRateMs ?? 0,
         deadbandPct: Number(mapping.deadbandPct ?? mapping.DeadbandPct ?? 0),
         writeable: (mapping.writeable ?? mapping.Writeable) === true,
-        accessRights: mapping.accessRights || mapping.AccessRights || 'Read'
+        accessRights: mapping.accessRights || mapping.AccessRights || 'Read',
+        mqttEnabled: el('fpMqttEnabled').checked,
+        mqttTopic: el('fpMqttTopic').value.trim() || null
     };
     mutate(payload);
     const r = await fetch('/api/mappings/update', {
