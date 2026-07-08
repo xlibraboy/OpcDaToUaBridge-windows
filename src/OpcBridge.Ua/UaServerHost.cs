@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Opc.Ua;
@@ -99,12 +100,36 @@ public sealed class UaServerHost : IAsyncDisposable
     public UaServerStatus GetStatus()
     {
         BridgeUaServer? server = server_;
+        string connectUrl = DeriveConnectUrl(options_.EndpointUrl);
         return new UaServerStatus(
             server is not null ? "Running" : "Stopped",
             options_.EndpointUrl,
+            connectUrl,
             server?.GetConnectedSessionCount() ?? 0,
             server?.GetMappedNodeCount() ?? 0,
             server?.GetLastValueUpdateUtc());
+    }
+
+    /// <summary>
+    /// Converts a bind address (e.g. opc.tcp://0.0.0.0:4840/...) into a client connect URL
+    /// by replacing the 0.0.0.0 wildcard with this machine's hostname. A concrete endpoint
+    /// (localhost / IP) is returned unchanged.
+    /// </summary>
+    private static string DeriveConnectUrl(string endpointUrl)
+    {
+        if (string.IsNullOrWhiteSpace(endpointUrl))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            return endpointUrl.Replace("0.0.0.0", Dns.GetHostName(), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return endpointUrl;
+        }
     }
 
     public IReadOnlyList<UaSessionDiagnostic> GetSessionDiagnostics()
@@ -225,6 +250,7 @@ public sealed class UaServerHost : IAsyncDisposable
 public sealed record UaServerStatus(
     string State,
     string EndpointUrl,
+    string ConnectUrl,
     int ConnectedClientCount,
     int MappedNodeCount,
     DateTime? LastValueUpdateUtc);

@@ -276,8 +276,13 @@ internal static class DashboardPage
         </div>
         <div class="box">
             <div class="box-h">OPC UA Endpoint</div>
-            <div class="box-b"><div class="endpoint" id="uaEndpoint">&#8212;</div><div class="msg" id="uaDiagnostics" style="margin-top:8px">0 nodes · no updates yet</div></div>
-        </div>
+            <div class="box-b">
+                <div class="endpoint" id="uaEndpoint">&#8212;</div>
+                <div class="msg" style="margin-top:6px;color:var(--muted)">Server bind address (0.0.0.0 = all interfaces)</div>
+                <div style="margin-top:10px"><div class="k" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)">Connect from client</div><div class="endpoint" id="uaConnectUrl" style="margin-top:3px">&#8212;</div></div>
+                <div class="msg" style="margin-top:6px;color:var(--muted)">Use this URL in your OPC UA client to connect from another machine</div>
+                <div class="msg" id="uaDiagnostics" style="margin-top:8px">0 nodes · no updates yet</div>
+            </div>
     </div>
     <div class="box">
         <div class="box-h">DA Live Values <span class="msg" id="valCount" style="margin-left:auto"></span><button class="btn ghost" id="toggleLiveValues" type="button">Disable Live Data</button></div>
@@ -1051,8 +1056,9 @@ async function refresh() {
         el('updateRate').textContent = updateRateMs + ' ms';
         el('pollUtilizationFill').style.width = pollUtilization.width;
         el('pollUtilizationFill').className = pollUtilization.className;
-        el('pollUtilizationText').textContent = pollUtilization.text;
-        el('pollSaturation').textContent = pollSaturation.text;
+        el('uaEndpoint').textContent = get(ua, 'endpointUrl') || '—';
+        el('uaConnectUrl').textContent = get(ua, 'connectUrl') || get(ua, 'endpointUrl') || '—';
+        el('uaDiagnostics').textContent = formatUaDiagnostics(ua);
         el('pollSaturation').className = pollSaturation.className;
         if (document.activeElement !== el('cfgUpdateRate')) el('cfgUpdateRate').value = String(updateRateMs);
         el('mappingCount').textContent = (get(b, 'mappingCount') ?? 0) + ' tags';

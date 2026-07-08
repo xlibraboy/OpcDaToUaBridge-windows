@@ -89,6 +89,22 @@ internal static class HelpContent
 - UA clients subscribe to UA nodes and receive notifications when values change.
 - The web dashboard reads from `/api/dashboard` (1s polling) to display live status and resource telemetry.
 
+## OPC UA Endpoint — Bind vs Connect
+
+The **Endpoint URL** in Connection settings has two faces:
+
+| Field | Value | Purpose |
+|---|---|---|
+| **Endpoint (config)** | `opc.tcp://0.0.0.0:4840/OpcDaToUaBridge` | The server's **bind address**. `0.0.0.0` means "listen on all network interfaces" (localhost + LAN + VPN). This is the correct value for a server. |
+| **Connect from client** | `opc.tcp://<hostname>:4840/OpcDaToUaBridge` | The URL you enter in an **OPC UA client** to connect. The dashboard shows this with the host's real name filled in. |
+
+**Do not** put `0.0.0.0` in your client's connect string — `0.0.0.0` means "this machine" to a client, which is the *client's* own machine, not the bridge. Always use the bridge host's IP address or hostname:
+
+- Same machine: `opc.tcp://localhost:4840/OpcDaToUaBridge`
+- Another machine on the LAN: `opc.tcp://192.168.x.x:4840/OpcDaToUaBridge` or `opc.tcp://HOSTNAME:4840/OpcDaToUaBridge`
+
+The **Monitor** tab shows both values: the configured bind address and the derived client connect URL.
+
 ## Unified UA Address Space
 
 The bridge exposes **all tags from all DA sources** in a single OPC UA server address space. A connecting HMI/SCADA client sees one endpoint with all tags mixed together — it has no knowledge of how many DA servers exist behind the bridge.
