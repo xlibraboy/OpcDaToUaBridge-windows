@@ -7,6 +7,7 @@ namespace OpcBridge.App;
 public sealed class BridgeState
 {
     private readonly ConcurrentDictionary<string, BridgeValueSnapshot> values_by_key_;
+    public event Action<BridgeValue>? ValueUpdated;
     private readonly Dictionary<string, RateGroupStatus> rate_groups_ = new(StringComparer.OrdinalIgnoreCase);
     private BridgeRuntimeStatus status_ = BridgeRuntimeStatus.Empty;
     private readonly object status_lock_ = new();
@@ -132,6 +133,8 @@ public sealed class BridgeState
             value.TimestampUtc,
             value.DaQuality,
             value.IsGood);
+
+        ValueUpdated?.Invoke(value);
     }
 
     public void ClearValue(string sourceId, string daItemId)
