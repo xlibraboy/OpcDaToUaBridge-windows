@@ -6,7 +6,9 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging;
 using OpcBridge.Core;
 using OpcBridge.Da;
+using OpcBridge.Mqtt;
 using OpcBridge.Ua;
+using System.Threading.Channels;
 
 namespace OpcBridge.App;
 
@@ -24,6 +26,17 @@ public sealed class BridgeWorker : BackgroundService
     private int backoffMs_ = 1000;
     private WriteQueue? write_queue_;
     private volatile Dictionary<string, SourceSession>? active_sessions_;
+    private readonly IMqttBridge mqtt_bridge_;
+    private readonly MqttRuntimeSettings mqtt_settings_;
+    private readonly MqttTrafficStore mqtt_traffic_;
+    private readonly Channel<BridgeValue> mqtt_publish_channel_ = Channel.CreateBounded<BridgeValue>(
+        new BoundedChannelOptions(1024)
+        {
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = true,
+            SingleWriter = false
+        });
+    private HashSet<string> mqtt_enabled_keys_ = new(StringComparer.OrdinalIgnoreCase);
 
     public BridgeWorker(
         UaServerHost uaServer,
@@ -32,7 +45,10 @@ public sealed class BridgeWorker : BackgroundService
         DaRuntimeSettings daSettings,
         DaClientFactory daClientFactory,
         IOptions<BridgeOptions> bridgeOptions,
-        ILogger<BridgeWorker> logger)
+        ILogger<BridgeWorker> logger,
+        IMqttBridge mqttBridge,
+        MqttRuntimeSettings mqttSettings,
+        MqttTrafficStore mqttTraffic)
     {
         ua_server_ = uaServer;
         bridge_state_ = bridgeState;
@@ -41,6 +57,9 @@ public sealed class BridgeWorker : BackgroundService
         da_client_factory_ = daClientFactory;
         logger_ = logger;
         rate_limits_ = bridgeOptions.Value.RateLimits;
+        mqtt_bridge_ = mqttBridge;
+        mqtt_settings_ = mqttSettings;
+        mqtt_traffic_ = mqttTraffic;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -50,6 +69,10 @@ public sealed class BridgeWorker : BackgroundService
         SourceMappingCache sourceMappingCache = SourceMappingCache.Build(mappings);
         IReadOnlyList<TagMapping> activeMappings = sourceMappingCache.GetActiveMappings();
         bridge_state_.Configure(settings.UpdateRateMs, activeMappings.Count, settings.Sources);
+
+        mqtt_enabled_keys_ = new HashSet<string>(
+            activeMappings.Where(m => m.MqttEnabled).Select(m => NormalizeKey(m.SourceId, m.DaItemId)),
+            StringComparer.OrdinalIgnoreCase);
 
         try
         {
@@ -76,6 +99,19 @@ public sealed class BridgeWorker : BackgroundService
             SharedCacheHolder cacheHolder = new(sourceMappingCache);
             ConcurrentQueue<string> failedSourceQueue = new();
 
+            mqtt_bridge_.SetMessageSink(OnMqttInboundAsync);
+            mqtt_bridge_.StateChanged += state =>
+            {
+                mqtt_settings_.SetState(state.ToString(), state == MqttConnectionState.Faulted ? "MQTT broker connection failed." : null);
+            };
+            bridge_state_.ValueUpdated += OnBridgeValueUpdated;
+            _ = Task.Run(() => MqttPublishDrainAsync(pollerCts.Token), pollerCts.Token);
+
+            if (mqtt_settings_.GetOptions().Enabled)
+            {
+                _ = ConnectMqttAsync(pollerCts.Token);
+            }
+
             try
             {
                 while (!stoppingToken.IsCancellationRequested)
@@ -100,6 +136,9 @@ public sealed class BridgeWorker : BackgroundService
                         {
                             cacheHolder.Cache = SourceMappingCache.Build(mappings);
                             activeMappings = cacheHolder.Cache.GetActiveMappings();
+                            mqtt_enabled_keys_ = new HashSet<string>(
+                                activeMappings.Where(m => m.MqttEnabled).Select(m => NormalizeKey(m.SourceId, m.DaItemId)),
+                                StringComparer.OrdinalIgnoreCase);
                             ua_server_.SyncMappings(activeMappings);
                             bridge_state_.RetainMappedValues(activeMappings);
                             uaMappingVersion = mappingVersion;
@@ -471,6 +510,151 @@ public sealed class BridgeWorker : BackgroundService
             BridgeValue value = values[i];
             bridge_state_.SetValue(value);
             ua_server_.UpdateValue(value);
+        }
+    }
+
+    private static string NormalizeKey(string sourceId, string daItemId)
+    {
+        return string.Concat(sourceId.Trim(), "::", daItemId.Trim());
+    }
+
+    private void OnBridgeValueUpdated(BridgeValue value)
+    {
+        if (!mqtt_enabled_keys_.Contains(NormalizeKey(value.SourceId, value.DaItemId)))
+        {
+            return;
+        }
+
+        _ = mqtt_publish_channel_.Writer.WriteAsync(value);
+    }
+
+    private async Task ConnectMqttAsync(CancellationToken ct)
+    {
+        try
+        {
+            mqtt_settings_.SetState("Connecting");
+            await mqtt_bridge_.ConnectAsync(mqtt_settings_.GetOptions(), ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            mqtt_settings_.SetState("Faulted", ex.Message);
+            logger_.LogWarning(ex, "MQTT connect failed");
+        }
+    }
+
+    private async Task MqttPublishDrainAsync(CancellationToken ct)
+    {
+        MqttBrokerOptions options = mqtt_settings_.GetOptions();
+        await foreach (BridgeValue value in mqtt_publish_channel_.Reader.ReadAllAsync(ct).ConfigureAwait(false))
+        {
+            try
+            {
+                string topic = MqttPayload.BuildTopic(options, value.SourceId, value.DaItemId,
+                    ResolveMqttTopicOverride(value.SourceId, value.DaItemId));
+                string payload = MqttPayload.Serialize(value, options.PayloadFields, ResolveDisplayName(value.SourceId, value.DaItemId));
+                await mqtt_bridge_.PublishAsync(topic, payload, ct).ConfigureAwait(false);
+                mqtt_settings_.IncrementPublished();
+                mqtt_traffic_.Add("PUB", topic, payload);
+            }
+            catch (Exception ex)
+            {
+                logger_.LogWarning(ex, "MQTT publish failed for {SourceId}/{ItemId}", value.SourceId, value.DaItemId);
+            }
+        }
+    }
+
+    private async Task OnMqttInboundAsync(MqttInboundMessage message)
+    {
+        mqtt_settings_.IncrementReceived();
+        mqtt_traffic_.Add("SUB", message.Topic, message.RawValue);
+
+        (string? sourceId, string? daItemId) = ResolveTopicToMapping(message.Topic);
+        if (sourceId is null || daItemId is null)
+        {
+            logger_.LogDebug("MQTT inbound topic has no matching mapping: {Topic}", message.Topic);
+            return;
+        }
+
+        var (mappings, _) = mapping_store_.GetSnapshot();
+        TagMapping? mapping = mappings.FirstOrDefault(m =>
+            string.Equals(m.SourceId, sourceId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(m.DaItemId, daItemId, StringComparison.OrdinalIgnoreCase));
+        if (mapping is null || !mapping.MqttEnabled)
+        {
+            return;
+        }
+
+        object? converted = ConvertIncoming(mapping, message.RawValue);
+        bool ok = await ApplyUaWriteAsync(sourceId, daItemId, converted, message.TimestampUtc ?? DateTime.UtcNow, CancellationToken.None).ConfigureAwait(false);
+        if (!ok)
+        {
+            logger_.LogWarning("MQTT inbound write rejected for {SourceId}/{ItemId}", sourceId, daItemId);
+        }
+    }
+
+    private (string? SourceId, string? DaItemId) ResolveTopicToMapping(string topic)
+    {
+        MqttBrokerOptions options = mqtt_settings_.GetOptions();
+        string prefix = (string.IsNullOrWhiteSpace(options.TopicPrefix) ? "bridge/tags" : options.TopicPrefix.Trim().Trim('/')) + "/";
+        if (!topic.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return (null, null);
+
+        string remainder = topic[prefix.Length..];
+        int slash = remainder.IndexOf('/');
+        if (slash < 0) return (null, null);
+        return (remainder[..slash], remainder[(slash + 1)..]);
+    }
+
+    private string? ResolveMqttTopicOverride(string sourceId, string daItemId)
+    {
+        var (mappings, _) = mapping_store_.GetSnapshot();
+        TagMapping? mapping = mappings.FirstOrDefault(m =>
+            string.Equals(m.SourceId, sourceId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(m.DaItemId, daItemId, StringComparison.OrdinalIgnoreCase));
+        return mapping?.MqttTopic;
+    }
+
+    private string? ResolveDisplayName(string sourceId, string daItemId)
+    {
+        var (mappings, _) = mapping_store_.GetSnapshot();
+        TagMapping? mapping = mappings.FirstOrDefault(m =>
+            string.Equals(m.SourceId, sourceId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(m.DaItemId, daItemId, StringComparison.OrdinalIgnoreCase));
+        return mapping?.DisplayName;
+    }
+
+    private static object? ConvertIncoming(TagMapping mapping, string? rawValue)
+    {
+        if (rawValue is null) return null;
+        string text = rawValue.Trim();
+        if (string.Equals(mapping.DataType, "String", StringComparison.OrdinalIgnoreCase))
+        {
+            return text;
+        }
+
+        if (bool.TryParse(text, out bool b)) return b;
+        if (long.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out long l)) return l;
+        if (double.TryParse(text, System.Globalization.NumberStyles.Float | System.Globalization.NumberStyles.AllowThousands, System.Globalization.CultureInfo.InvariantCulture, out double d)) return d;
+        return text;
+    }
+
+    /// <summary>Write a value through the existing UA write path (WriteQueue → per-source consumer → DA). Same seam a UA client write uses.</summary>
+    public async Task<bool> ApplyUaWriteAsync(string sourceId, string daItemId, object? value, DateTime timestampUtc, CancellationToken ct)
+    {
+        if (write_queue_ is null) return false;
+
+        TaskCompletionSource<bool> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        await write_queue_.EnqueueAsync(new WriteRequest(sourceId, daItemId, value, tcs), ct).ConfigureAwait(false);
+
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        linked.CancelAfter(TimeSpan.FromSeconds(5));
+        try
+        {
+            return await tcs.Task.WaitAsync(linked.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            tcs.TrySetResult(false);
+            return false;
         }
     }
     public object GetDiagnostics()

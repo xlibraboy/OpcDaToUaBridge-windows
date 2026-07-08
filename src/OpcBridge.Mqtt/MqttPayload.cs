@@ -4,7 +4,7 @@ using OpcBridge.Core;
 
 namespace OpcBridge.Mqtt;
 
-internal static class MqttPayload
+public static class MqttPayload
 {
     public static string BuildTopic(MqttBrokerOptions options, string sourceId, string daItemId, string? overrideTopic)
     {
