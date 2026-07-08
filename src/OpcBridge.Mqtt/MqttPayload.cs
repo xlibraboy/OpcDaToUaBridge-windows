@@ -74,7 +74,10 @@ internal static class MqttPayload
             using JsonDocument doc = JsonDocument.Parse(span.ToString());
             if (doc.RootElement.ValueKind == JsonValueKind.Object)
             {
-                JsonElement v = doc.RootElement.GetProperty("v");
+                if (!doc.RootElement.TryGetProperty("v", out JsonElement v))
+                {
+                    return (null, null);
+                }
                 string? raw = v.ValueKind == JsonValueKind.String ? v.GetString() : v.GetRawText();
                 DateTime? ts = null;
                 if (doc.RootElement.TryGetProperty("t", out JsonElement t) && t.ValueKind == JsonValueKind.String)
