@@ -17,6 +17,7 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
     private readonly UaServerHost ua_server_;
     private readonly BridgeState bridge_state_;
     private readonly MappingStore mapping_store_;
+    private readonly DaLinkStore da_link_store_;
     private readonly DaRuntimeSettings da_settings_;
     private readonly DaClientFactory da_client_factory_;
     private readonly ILogger<BridgeWorker> logger_;
@@ -29,6 +30,7 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
         UaServerHost uaServer,
         BridgeState bridgeState,
         MappingStore mappingStore,
+        DaLinkStore daLinkStore,
         DaRuntimeSettings daSettings,
         DaClientFactory daClientFactory,
         IOptions<BridgeOptions> bridgeOptions,
@@ -37,6 +39,7 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
         ua_server_ = uaServer;
         bridge_state_ = bridgeState;
         mapping_store_ = mappingStore;
+        da_link_store_ = daLinkStore;
         da_settings_ = daSettings;
         da_client_factory_ = daClientFactory;
         logger_ = logger;
@@ -47,7 +50,8 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
     {
         DaRuntimeSettingsSnapshot settings = da_settings_.GetSnapshot();
         (IReadOnlyList<TagMapping> mappings, long mappingVersion) = mapping_store_.GetSnapshot();
-        SourceMappingCache sourceMappingCache = SourceMappingCache.Build(mappings);
+        (IReadOnlyList<DaLinkRule> rules, long daLinkVersion) = da_link_store_.GetSnapshot();
+        SourceMappingCache sourceMappingCache = SourceMappingCache.Build(mappings, rules);
         IReadOnlyList<TagMapping> activeMappings = sourceMappingCache.GetActiveMappings();
         bridge_state_.Configure(settings.UpdateRateMs, activeMappings.Count, settings.Sources);
 
@@ -69,6 +73,7 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
             });
 
             long uaMappingVersion = mappingVersion;
+            long appliedDaLinkVersion = daLinkVersion;
             long connectedVersion = -1;
             Dictionary<string, SourceSession> sessions = new(StringComparer.OrdinalIgnoreCase);
             Dictionary<string, Task> pollers = new(StringComparer.OrdinalIgnoreCase);
@@ -82,6 +87,7 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
                 {
                     settings = da_settings_.GetSnapshot();
                     (mappings, mappingVersion) = mapping_store_.GetSnapshot();
+                    (rules, daLinkVersion) = da_link_store_.GetSnapshot();
 
                     try
                     {
@@ -96,16 +102,28 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
                             pollerCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
                         }
 
-                        if (mappingVersion != uaMappingVersion)
+                        bool mappingsChanged = mappingVersion != uaMappingVersion;
+                        bool rulesChanged = daLinkVersion != appliedDaLinkVersion;
+                        if (mappingsChanged || rulesChanged)
                         {
-                            cacheHolder.Cache = SourceMappingCache.Build(mappings);
-                            activeMappings = cacheHolder.Cache.GetActiveMappings();
-                            ua_server_.SyncMappings(activeMappings);
-                            bridge_state_.RetainMappedValues(activeMappings);
-                            uaMappingVersion = mappingVersion;
-                            connectedVersion = -1;
-                            bridge_state_.UpdateSources(settings.UpdateRateMs, activeMappings.Count, settings.Sources);
-                            logger_.LogInformation("Applied tag mapping change: {Count} mappings", activeMappings.Count);
+                            cacheHolder.Cache = SourceMappingCache.Build(mappings, rules);
+
+                            if (mappingsChanged)
+                            {
+                                activeMappings = cacheHolder.Cache.GetActiveMappings();
+                                ua_server_.SyncMappings(activeMappings);
+                                bridge_state_.RetainMappedValues(activeMappings);
+                                uaMappingVersion = mappingVersion;
+                                connectedVersion = -1;
+                                bridge_state_.UpdateSources(settings.UpdateRateMs, activeMappings.Count, settings.Sources);
+                                logger_.LogInformation("Applied tag mapping change: {Count} mappings", activeMappings.Count);
+                            }
+
+                            if (rulesChanged)
+                            {
+                                appliedDaLinkVersion = daLinkVersion;
+                                logger_.LogInformation("Applied DA link change: {Count} rules", rules.Count);
+                            }
                         }
 
                         if (connectedVersion != settings.Version)
@@ -808,12 +826,11 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
         return true;
     }
 
-    private sealed class SourceMappingCache
+    internal sealed class SourceMappingCache
     {
         private static readonly IReadOnlyList<TagMapping> EmptyMappings = Array.Empty<TagMapping>();
         private readonly Dictionary<string, SourceMappingSet> mappings_by_source_;
         private readonly IReadOnlyList<TagMapping> active_mappings_;
-        // Forward index: provider tag key (SourceId::DaItemId) -> consumers that link to it.
         private readonly Dictionary<string, IReadOnlyList<TagMapping>> consumers_by_provider_;
 
         private SourceMappingCache(
@@ -828,9 +845,14 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
 
         public static SourceMappingCache Build(IReadOnlyList<TagMapping> mappings)
         {
+            return Build(mappings, Array.Empty<DaLinkRule>());
+        }
+
+        public static SourceMappingCache Build(IReadOnlyList<TagMapping> mappings, IReadOnlyList<DaLinkRule> rules)
+        {
             Dictionary<string, List<TagMapping>> groupedMappings = new(StringComparer.OrdinalIgnoreCase);
             List<TagMapping> activeMappings = new(mappings.Count);
-            Dictionary<string, List<TagMapping>> consumersByProvider = new(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, TagMapping> mappingsByKey = new(StringComparer.OrdinalIgnoreCase);
 
             for (int i = 0; i < mappings.Count; i++)
             {
@@ -842,21 +864,37 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
                 }
 
                 sourceMappings.Add(mapping);
-                if (mapping.Enabled && !string.IsNullOrEmpty(mapping.ProviderSourceId) && !string.IsNullOrEmpty(mapping.ProviderDaItemId))
-                {
-                    string providerKey = GetMappingKey(mapping.ProviderSourceId, mapping.ProviderDaItemId);
-                    if (!consumersByProvider.TryGetValue(providerKey, out List<TagMapping>? consumers))
-                    {
-                        consumers = new List<TagMapping>();
-                        consumersByProvider[providerKey] = consumers;
-                    }
-                    consumers.Add(mapping);
-                }
+                mappingsByKey[GetMappingKey(mapping.SourceId, mapping.DaItemId)] = mapping;
 
                 if (mapping.Enabled)
                 {
                     activeMappings.Add(mapping);
                 }
+            }
+
+            Dictionary<string, List<TagMapping>> consumersByProvider = new(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < rules.Count; i++)
+            {
+                DaLinkRule rule = rules[i];
+                if (!rule.Enabled)
+                {
+                    continue;
+                }
+
+                if (!mappingsByKey.TryGetValue(GetMappingKey(rule.ConsumerSourceId, rule.ConsumerItemId), out TagMapping? consumer) ||
+                    !consumer.Enabled)
+                {
+                    continue;
+                }
+
+                string providerKey = GetMappingKey(rule.ProviderSourceId, rule.ProviderItemId);
+                if (!consumersByProvider.TryGetValue(providerKey, out List<TagMapping>? consumers))
+                {
+                    consumers = new List<TagMapping>();
+                    consumersByProvider[providerKey] = consumers;
+                }
+
+                consumers.Add(consumer);
             }
 
             Dictionary<string, SourceMappingSet> frozenMappings = new(StringComparer.OrdinalIgnoreCase);
