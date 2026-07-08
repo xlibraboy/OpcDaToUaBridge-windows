@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using OpcBridge.App;
 using OpcBridge.Core;
 using OpcBridge.Da;
+using OpcBridge.Mqtt;
 using OpcBridge.Ua;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
@@ -27,6 +28,9 @@ builder.Services.AddSingleton<DaClientFactory>();
 builder.Services.AddSingleton<BridgeState>();
 builder.Services.AddSingleton<MappingStore>();
 builder.Services.AddSingleton<UaServerHost>();
+builder.Services.AddSingleton<IMqttBridge, MqttBridge>();
+builder.Services.AddSingleton<MqttRuntimeSettings>();
+builder.Services.AddSingleton<MqttTrafficStore>();
 builder.Services.AddSingleton<BridgeWorker>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<BridgeWorker>());
 builder.Services.AddHostedService<OpcBridgeMonitor>();
