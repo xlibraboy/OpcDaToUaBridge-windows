@@ -154,23 +154,32 @@ public sealed class DaLinkStore
     {
         ArgumentNullException.ThrowIfNull(mappings);
 
-        int migrated = 0;
-        foreach (TagMapping mapping in mappings)
+        lock (sync_)
         {
-            if (!TryCreateMigratedRule(mapping, out DaLinkRule rule))
+            List<DaLinkRule> migratedRules = new();
+            foreach (TagMapping mapping in mappings)
             {
-                continue;
+                if (TryCreateMigratedRule(mapping, out DaLinkRule rule))
+                {
+                    migratedRules.Add(rule);
+                }
             }
 
-            if (!TryAdd(rule, out _, out string? error))
+            if (migratedRules.Count == 0)
             {
-                throw new InvalidOperationException(error);
+                return 0;
             }
 
-            migrated++;
+            List<DaLinkRule> combined = new(rules_.Count + migratedRules.Count);
+            combined.AddRange(rules_);
+            combined.AddRange(migratedRules);
+
+            List<DaLinkRule> normalized = NormalizeAllOrThrow(combined);
+            rules_ = normalized;
+            version_++;
+            Persist();
+            return migratedRules.Count;
         }
-
-        return migrated;
     }
 
     private static bool TryCreateMigratedRule(TagMapping mapping, out DaLinkRule rule)
@@ -211,6 +220,35 @@ public sealed class DaLinkStore
             existing.Id != currentId &&
             string.Equals(existing.ConsumerSourceId, consumerSourceId, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(existing.ConsumerItemId, consumerItemId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static List<DaLinkRule> NormalizeAllOrThrow(IEnumerable<DaLinkRule> rules)
+    {
+        List<DaLinkRule> normalized = new();
+        HashSet<Guid> ids = new();
+        HashSet<(string SourceId, string ItemId)> consumers = new(ConsumerKeyComparer.Instance);
+
+        foreach (DaLinkRule rule in rules)
+        {
+            if (!TryNormalize(rule, out DaLinkRule normalizedRule, out string? error))
+            {
+                throw new InvalidOperationException(error);
+            }
+
+            if (!ids.Add(normalizedRule.Id))
+            {
+                throw new InvalidOperationException("Rule already exists.");
+            }
+
+            if (!consumers.Add((normalizedRule.ConsumerSourceId, normalizedRule.ConsumerItemId)))
+            {
+                throw new InvalidOperationException("Consumer already has a provider.");
+            }
+
+            normalized.Add(normalizedRule);
+        }
+
+        return normalized;
     }
 
     private static bool TryNormalize(DaLinkRule rule, out DaLinkRule normalized, out string? error)

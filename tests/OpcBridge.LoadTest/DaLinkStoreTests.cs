@@ -20,6 +20,11 @@ public sealed class DaLinkStoreTests
         return new DaLinkStore(Options.Create(new BridgeOptions()));
     }
 
+    private static string GetPersistPath()
+    {
+        return Path.Combine(AppContext.BaseDirectory, "links.json");
+    }
+
     private static DaLinkRule CreateRule(
         Guid? id = null,
         string providerSourceId = "providerA",
@@ -116,6 +121,49 @@ public sealed class DaLinkStoreTests
             store.MigrateFromMappings(mappings));
 
         Assert.Equal("Consumer already has a provider.", ex.Message);
+    }
+
+    [Fact]
+    public void MigrateFromMappings_FailureLeavesStoreAndPersistedFileUnchanged()
+    {
+        DaLinkStore store = CreateStore();
+        DaLinkRule existing = CreateRule(
+            providerSourceId: "providerSeed",
+            providerItemId: "itemSeedP",
+            consumerSourceId: "consumerSeed",
+            consumerItemId: "itemSeedC");
+
+        Assert.True(store.TryAdd(existing, out _, out _));
+        string before = File.ReadAllText(GetPersistPath());
+
+        TagMapping[] mappings =
+        {
+            new()
+            {
+                SourceId = "consumerA",
+                DaItemId = "itemA",
+                ProviderSourceId = "providerA",
+                ProviderDaItemId = "itemP1"
+            },
+            new()
+            {
+                SourceId = "consumerA",
+                DaItemId = "itemA",
+                ProviderSourceId = "providerB",
+                ProviderDaItemId = "itemP2"
+            }
+        };
+
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() =>
+            store.MigrateFromMappings(mappings));
+
+        Assert.Equal("Consumer already has a provider.", ex.Message);
+
+        (IReadOnlyList<DaLinkRule> rules, long version) = store.GetSnapshot();
+        DaLinkRule remaining = Assert.Single(rules);
+        Assert.Equal(existing, remaining);
+        Assert.Equal(1, version);
+        Assert.Equal(before, File.ReadAllText(GetPersistPath()));
     }
 
     [Fact]
