@@ -105,11 +105,11 @@ public sealed class BridgeWorker : BackgroundService
                 mqtt_settings_.SetState(state.ToString(), state == MqttConnectionState.Faulted ? "MQTT broker connection failed." : null);
             };
             bridge_state_.ValueUpdated += OnBridgeValueUpdated;
-            _ = Task.Run(() => MqttPublishDrainAsync(pollerCts.Token), pollerCts.Token);
+            _ = Task.Run(() => MqttPublishDrainAsync(stoppingToken), stoppingToken);
 
             if (mqtt_settings_.GetOptions().Enabled)
             {
-                _ = ConnectMqttAsync(pollerCts.Token);
+                _ = ConnectMqttAsync(stoppingToken);
             }
 
             try
@@ -549,6 +549,7 @@ public sealed class BridgeWorker : BackgroundService
         {
             try
             {
+                options = mqtt_settings_.GetOptions();
                 string topic = MqttPayload.BuildTopic(options, value.SourceId, value.DaItemId,
                     ResolveMqttTopicOverride(value.SourceId, value.DaItemId));
                 string payload = MqttPayload.Serialize(value, options.PayloadFields, ResolveDisplayName(value.SourceId, value.DaItemId));
