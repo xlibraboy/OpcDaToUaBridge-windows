@@ -64,17 +64,21 @@ public static class OpcTagBrowser
         object serverObject = Activator.CreateInstance(serverType)
             ?? throw new InvalidOperationException($"Failed to create OPC DA server '{progId}'.");
 
+        object? groupObject = null;
+        int serverGroupHandle = 0;
         try
         {
             if (serverObject is not IOPCBrowseServerAddressSpace browse)
                 throw new InvalidOperationException(
                     "This OPC DA server does not support address-space browsing (IOPCBrowseServerAddressSpace).");
 
+            IOPCItemMgt? itemManagement = TryCreateMetadataItemManagement(serverObject, out groupObject, out serverGroupHandle);
+
             browse.QueryOrganization(out int organization);
 
             if (organization == OpcNsFlat)
             {
-                List<OpcTagNode> flatTags = EnumerateLeaves(browse, OpcFlat, string.Empty);
+                List<OpcTagNode> flatTags = EnumerateLeaves(browse, itemManagement, OpcFlat, string.Empty);
                 return new OpcTagBrowseResult([], flatTags);
             }
 
@@ -84,17 +88,18 @@ public static class OpcTagBrowser
             if (recursive)
             {
                 List<OpcTagNode> allTags = new();
-                CollectLeavesRecursive(browse, NormalizePath(path), allTags, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                CollectLeavesRecursive(browse, itemManagement, NormalizePath(path), allTags, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
                 return new OpcTagBrowseResult([], allTags);
             }
 
             List<string> branches = EnumerateBranches(browse);
-            List<OpcTagNode> tags = EnumerateLeaves(browse, OpcLeaf, NormalizePath(path));
+            List<OpcTagNode> tags = EnumerateLeaves(browse, itemManagement, OpcLeaf, NormalizePath(path));
 
             return new OpcTagBrowseResult(branches, tags);
         }
         finally
         {
+            ReleaseMetadataItemManagement(serverObject as IOPCServer, groupObject, serverGroupHandle);
             Marshal.FinalReleaseComObject(serverObject);
         }
     }
@@ -143,7 +148,7 @@ public static class OpcTagBrowser
     }
 
     [SupportedOSPlatform("windows")]
-    private static List<OpcTagNode> EnumerateLeaves(IOPCBrowseServerAddressSpace browse, int browseType, string path)
+    private static List<OpcTagNode> EnumerateLeaves(IOPCBrowseServerAddressSpace browse, IOPCItemMgt? itemManagement, int browseType, string path)
     {
         List<string> names = new();
         try
@@ -153,26 +158,33 @@ public static class OpcTagBrowser
         }
         catch { /* none */ }
 
-        List<OpcTagNode> result = new(names.Count);
-        foreach (string name in names)
+        string[] itemIds = new string[names.Count];
+        for (int i = 0; i < names.Count; i++)
         {
-            string itemId = name;
-            try { browse.GetItemID(name, out itemId); } catch { /* keep */ }
-            string displayName = path.Length == 0 ? name : string.Concat(path, ".", name);
-            result.Add(new OpcTagNode(displayName, itemId));
+            itemIds[i] = names[i];
+            try { browse.GetItemID(names[i], out itemIds[i]); } catch { /* keep */ }
         }
+
+        OpcTagMetadata[] metadata = ReadNativeMetadata(itemManagement, itemIds);
+        List<OpcTagNode> result = new(names.Count);
+        for (int i = 0; i < names.Count; i++)
+        {
+            string displayName = path.Length == 0 ? names[i] : string.Concat(path, ".", names[i]);
+            result.Add(new OpcTagNode(displayName, itemIds[i], metadata[i].CanonicalDataType, metadata[i].AccessRights));
+        }
+
         return result;
     }
 
     [SupportedOSPlatform("windows")]
-    private static void CollectLeavesRecursive(IOPCBrowseServerAddressSpace browse, string path, List<OpcTagNode> tags, HashSet<string> visitedPaths)
+    private static void CollectLeavesRecursive(IOPCBrowseServerAddressSpace browse, IOPCItemMgt? itemManagement, string path, List<OpcTagNode> tags, HashSet<string> visitedPaths)
     {
         if (!visitedPaths.Add(path))
         {
             return;
         }
 
-        tags.AddRange(EnumerateLeaves(browse, OpcLeaf, path));
+        tags.AddRange(EnumerateLeaves(browse, itemManagement, OpcLeaf, path));
 
         foreach (string branch in EnumerateBranches(browse))
         {
@@ -185,7 +197,7 @@ public static class OpcTagBrowser
 
             try
             {
-                CollectLeavesRecursive(browse, childPath, tags, visitedPaths);
+                CollectLeavesRecursive(browse, itemManagement, childPath, tags, visitedPaths);
             }
             finally
             {
@@ -213,6 +225,180 @@ public static class OpcTagBrowser
         Marshal.FinalReleaseComObject(enumerator);
     }
 
+    [SupportedOSPlatform("windows")]
+    private static IOPCItemMgt? TryCreateMetadataItemManagement(object serverObject, out object? groupObject, out int serverGroupHandle)
+    {
+        groupObject = null;
+        serverGroupHandle = 0;
+
+        if (serverObject is not IOPCServer server)
+        {
+            return null;
+        }
+
+        Guid itemManagementGuid = typeof(IOPCItemMgt).GUID;
+
+        try
+        {
+            int hresult = server.AddGroup(
+                "OpcBridge_BrowseMetadata",
+                0,
+                1000,
+                0,
+                IntPtr.Zero,
+                IntPtr.Zero,
+                0,
+                out serverGroupHandle,
+                out _,
+                ref itemManagementGuid,
+                out groupObject);
+            if (hresult < 0 || groupObject is not IOPCItemMgt itemManagement)
+            {
+                ReleaseMetadataItemManagement(server, groupObject, serverGroupHandle);
+                groupObject = null;
+                serverGroupHandle = 0;
+                return null;
+            }
+
+            return itemManagement;
+        }
+        catch
+        {
+            ReleaseMetadataItemManagement(server, groupObject, serverGroupHandle);
+            groupObject = null;
+            serverGroupHandle = 0;
+            return null;
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static OpcTagMetadata[] ReadNativeMetadata(IOPCItemMgt? itemManagement, IReadOnlyList<string> itemIds)
+    {
+        OpcTagMetadata[] metadata = new OpcTagMetadata[itemIds.Count];
+        if (itemManagement is null || itemIds.Count == 0)
+        {
+            return metadata;
+        }
+
+        OpcItemDefinition[] definitions = new OpcItemDefinition[itemIds.Count];
+        for (int i = 0; i < itemIds.Count; i++)
+        {
+            definitions[i] = new OpcItemDefinition
+            {
+                AccessPath = string.Empty,
+                ItemId = itemIds[i],
+                IsActive = 0,
+                ClientHandle = i + 1,
+                RequestedDataType = 0
+            };
+        }
+
+        IntPtr resultsPointer = IntPtr.Zero;
+        IntPtr errorsPointer = IntPtr.Zero;
+        List<int>? cleanupHandles = null;
+
+        try
+        {
+            int hresult = itemManagement.AddItems(definitions.Length, definitions, out resultsPointer, out errorsPointer);
+            if (hresult < 0 || resultsPointer == IntPtr.Zero || errorsPointer == IntPtr.Zero)
+            {
+                return metadata;
+            }
+
+            int[] itemErrors = new int[definitions.Length];
+            Marshal.Copy(errorsPointer, itemErrors, 0, definitions.Length);
+
+            cleanupHandles = new List<int>(definitions.Length);
+            int resultSize = Marshal.SizeOf<OpcItemResult>();
+            for (int i = 0; i < definitions.Length; i++)
+            {
+                IntPtr resultPointer = IntPtr.Add(resultsPointer, i * resultSize);
+                OpcItemResult result = Marshal.PtrToStructure<OpcItemResult>(resultPointer);
+
+                if (result.BlobPointer != IntPtr.Zero)
+                {
+                    Marshal.FreeCoTaskMem(result.BlobPointer);
+                }
+
+                if (itemErrors[i] < 0)
+                {
+                    continue;
+                }
+
+                metadata[i] = new OpcTagMetadata(result.CanonicalDataType, result.AccessRights);
+                if (result.ServerHandle != 0)
+                {
+                    cleanupHandles.Add(result.ServerHandle);
+                }
+            }
+        }
+        catch
+        {
+            return metadata;
+        }
+        finally
+        {
+            if (cleanupHandles is { Count: > 0 })
+            {
+                RemoveItems(itemManagement, cleanupHandles.ToArray());
+            }
+
+            if (errorsPointer != IntPtr.Zero)
+            {
+                Marshal.FreeCoTaskMem(errorsPointer);
+            }
+
+            if (resultsPointer != IntPtr.Zero)
+            {
+                Marshal.FreeCoTaskMem(resultsPointer);
+            }
+        }
+
+        return metadata;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void ReleaseMetadataItemManagement(IOPCServer? server, object? groupObject, int serverGroupHandle)
+    {
+        try
+        {
+            if (server is not null && serverGroupHandle != 0)
+            {
+                server.RemoveGroup(serverGroupHandle, 0);
+            }
+        }
+        catch { }
+
+        if (groupObject is not null)
+        {
+            Marshal.FinalReleaseComObject(groupObject);
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void RemoveItems(IOPCItemMgt itemManagement, int[] serverHandles)
+    {
+        if (serverHandles.Length == 0)
+        {
+            return;
+        }
+
+        IntPtr errorsPointer = IntPtr.Zero;
+        try
+        {
+            itemManagement.RemoveItems(serverHandles.Length, serverHandles, out errorsPointer);
+        }
+        finally
+        {
+            if (errorsPointer != IntPtr.Zero)
+            {
+                Marshal.FreeCoTaskMem(errorsPointer);
+            }
+        }
+    }
+
+    private readonly record struct OpcTagMetadata(short? CanonicalDataType, int? AccessRights);
+
     private static string NormalizePath(string? path)
     {
         return path?.Trim().Trim('.') ?? string.Empty;
@@ -227,6 +413,89 @@ public static class OpcTagBrowser
             string.Equals(t, Environment.MachineName, StringComparison.OrdinalIgnoreCase))
             return null;
         return t;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct OpcItemDefinition
+    {
+        [MarshalAs(UnmanagedType.LPWStr)]
+        public string AccessPath;
+
+        [MarshalAs(UnmanagedType.LPWStr)]
+        public string ItemId;
+
+        public int IsActive;
+        public int ClientHandle;
+        public int BlobSize;
+        public IntPtr BlobPointer;
+        public short RequestedDataType;
+        public short Reserved;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct OpcItemResult
+    {
+        public int ServerHandle;
+        public short CanonicalDataType;
+        public short Reserved;
+        public int AccessRights;
+        public int BlobSize;
+        public IntPtr BlobPointer;
+    }
+
+    [ComImport]
+    [Guid("39C13A4D-011E-11D0-9675-0020AFD8ADB3")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IOPCServer
+    {
+        int AddGroup(
+            [MarshalAs(UnmanagedType.LPWStr)] string name,
+            int active,
+            int requestedUpdateRate,
+            int clientGroupHandle,
+            IntPtr timeBias,
+            IntPtr percentDeadband,
+            int lcid,
+            out int serverGroupHandle,
+            out int revisedUpdateRate,
+            ref Guid requestedInterface,
+            [MarshalAs(UnmanagedType.IUnknown)] out object groupInterface);
+
+        int GetErrorString(int error, int locale, [MarshalAs(UnmanagedType.LPWStr)] out string errorString);
+
+        int GetGroupByName(
+            [MarshalAs(UnmanagedType.LPWStr)] string name,
+            ref Guid requestedInterface,
+            [MarshalAs(UnmanagedType.IUnknown)] out object groupInterface);
+
+        int GetStatus(out IntPtr serverStatus);
+
+        int RemoveGroup(int serverGroupHandle, int force);
+
+        int CreateGroupEnumerator(
+            int scope,
+            ref Guid requestedInterface,
+            [MarshalAs(UnmanagedType.IUnknown)] out object enumerator);
+    }
+
+    [ComImport]
+    [Guid("39C13A54-011E-11D0-9675-0020AFD8ADB3")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IOPCItemMgt
+    {
+        int AddItems(int count, [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] OpcItemDefinition[] itemDefinitions, out IntPtr results, out IntPtr errors);
+
+        int ValidateItems(int count, IntPtr itemDefinitions, int blobUpdate, out IntPtr validationResults, out IntPtr errors);
+
+        int RemoveItems(int count, [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] int[] serverHandles, out IntPtr errors);
+
+        int SetActiveState(int count, [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] int[] serverHandles, int active, out IntPtr errors);
+
+        int SetClientHandles(int count, IntPtr serverHandles, IntPtr clientHandles, out IntPtr errors);
+
+        int SetDatatypes(int count, IntPtr serverHandles, IntPtr requestedDatatypes, out IntPtr errors);
+
+        int CreateEnumerator(ref Guid requestedInterface, [MarshalAs(UnmanagedType.IUnknown)] out object enumerator);
     }
 
     [ComImport]
@@ -261,7 +530,7 @@ public static class OpcTagBrowser
     }
 }
 
-public sealed record OpcTagNode(string Name, string ItemId);
+public sealed record OpcTagNode(string Name, string ItemId, short? CanonicalDataType = null, int? AccessRights = null);
 
 public sealed record OpcTagBrowseResult(
     IReadOnlyList<string> Branches,

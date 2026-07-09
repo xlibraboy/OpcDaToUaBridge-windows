@@ -28,6 +28,8 @@ builder.Services.AddSingleton<DaRuntimeSettings>();
 builder.Services.AddSingleton<DaClientFactory>();
 builder.Services.AddSingleton<BridgeState>();
 builder.Services.AddSingleton<MappingStore>();
+builder.Services.AddSingleton<DaLinkStore>();
+builder.Services.AddSingleton<IDaLinkMetadataResolver>(sp => sp.GetRequiredService<BridgeWorker>());
 builder.Services.AddSingleton<UaServerHost>();
 builder.Services.AddSingleton<IMqttBridge, MqttBridge>();
 builder.Services.AddSingleton<MqttRuntimeSettings>();
@@ -37,6 +39,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<BridgeWorker>());
 builder.Services.AddHostedService<OpcBridgeMonitor>();
 
 WebApplication app = builder.Build();
+TryMigrateLegacyDaLinks(app);
 
 app.MapGet("/", () => Results.Bytes(System.Text.Encoding.UTF8.GetBytes(DashboardPage.FullHtml), "text/html; charset=utf-8"));
 app.MapGet("/api/values", (BridgeState state) => Results.Json(new { values = state.GetValues() }));
@@ -205,7 +208,7 @@ app.MapPost("/api/da/sources", (DaServerConfigRequest request, DaRuntimeSettings
         }
     });
 });
-app.MapPost("/api/da/sources/remove", (DaSourceRemoveRequest request, DaRuntimeSettings settings, MappingStore store) =>
+app.MapPost("/api/da/sources/remove", (DaSourceRemoveRequest request, DaRuntimeSettings settings, MappingStore store, DaLinkStore daLinkStore) =>
 {
     if (!settings.TryRemoveSource(request.SourceId, out DaRuntimeSettingsSnapshot snapshot))
     {
@@ -213,7 +216,8 @@ app.MapPost("/api/da/sources/remove", (DaSourceRemoveRequest request, DaRuntimeS
     }
 
     long mappingVersion = store.RemoveSource(request.SourceId);
-    return Results.Json(new { version = snapshot.Version, mappingVersion });
+    long daLinkVersion = daLinkStore.RemoveBySource(request.SourceId);
+    return Results.Json(new { version = snapshot.Version, mappingVersion, daLinkVersion });
 });
 app.MapPost("/api/da/servers", async (DaServerBrowseRequest request) =>
 {
@@ -248,7 +252,17 @@ app.MapPost("/api/da/tags", async (DaTagBrowseRequest request) =>
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         OpcTagBrowseResult result = await Task.Run(() => BrowseDaTags(request), cts.Token);
-        return Results.Json(new { branches = result.Branches, tags = result.Tags });
+        return Results.Json(new
+        {
+            branches = result.Branches,
+            tags = result.Tags.Select(tag => new
+            {
+                name = tag.Name,
+                itemId = tag.ItemId,
+                canonicalDataType = tag.CanonicalDataType,
+                accessRights = tag.AccessRights
+            })
+        });
     }
     catch (OperationCanceledException)
     {
@@ -258,6 +272,71 @@ app.MapPost("/api/da/tags", async (DaTagBrowseRequest request) =>
     {
         return Results.Json(new { error = exception.Message, branches = Array.Empty<object>(), tags = Array.Empty<object>() });
     }
+});
+app.MapGet("/api/da-links", (DaLinkStore store) =>
+{
+    (IReadOnlyList<DaLinkRule> rules, long version) = store.GetSnapshot();
+    return Results.Json(new
+    {
+        links = rules.Select(ToDaLinkDto),
+        version
+    });
+});
+app.MapPost("/api/da-links", (CreateDaLinkRequest request, DaLinkStore store, IDaLinkMetadataResolver metadataResolver) =>
+{
+    if (request.Link is null)
+    {
+        return Results.BadRequest(new { error = "Link is required." });
+    }
+
+    if (!TryBuildValidatedDaLinkRule(request.Link, null, store, metadataResolver, out DaLinkRule rule, out string? error))
+    {
+        return Results.BadRequest(new { error });
+    }
+
+    if (!store.TryAdd(rule, out long version, out string? storeError))
+    {
+        return string.Equals(storeError, "Rule already exists.", StringComparison.Ordinal)
+            ? Results.Conflict(new { error = storeError })
+            : Results.BadRequest(new { error = storeError });
+    }
+
+    return Results.Json(new { link = ToDaLinkDto(rule), version });
+});
+
+app.MapPut("/api/da-links/{id:guid}", (Guid id, UpdateDaLinkRequest request, DaLinkStore store, IDaLinkMetadataResolver metadataResolver) =>
+{
+    if (request.Link is null)
+    {
+        return Results.BadRequest(new { error = "Link is required." });
+    }
+    if (!DaLinkApiHelpers.TryGetStoredDaLinkRule(store, id, out _))
+    {
+        return Results.NotFound(new { error = "Rule not found." });
+    }
+
+    if (!TryBuildValidatedDaLinkRule(request.Link, id, store, metadataResolver, out DaLinkRule rule, out string? error))
+    {
+        return Results.BadRequest(new { error });
+    }
+
+    if (!store.TryUpdate(rule, out long version, out string? storeError))
+    {
+        return string.Equals(storeError, "Rule not found.", StringComparison.Ordinal)
+            ? Results.NotFound(new { error = storeError })
+            : Results.BadRequest(new { error = storeError });
+    }
+
+    return Results.Json(new { link = ToDaLinkDto(rule), version });
+});
+app.MapDelete("/api/da-links/{id:guid}", (Guid id, DaLinkStore store) =>
+{
+    if (!store.TryRemove(id, out long version))
+    {
+        return Results.NotFound(new { error = "Link not found." });
+    }
+
+    return Results.Json(new { version });
 });
 app.MapGet("/api/mappings", (MappingStore store) =>
 {
@@ -320,6 +399,7 @@ app.MapPost("/api/mappings/bulk-add", (MappingAddRequest request, MappingStore s
             ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue,
             PollRateMs = tag.PollRateMs ?? 0,
             Writeable = tag.Writeable ?? false,
+            DeadbandPct = tag.DeadbandPct ?? 0f,
             AccessRights = string.IsNullOrWhiteSpace(tag.AccessRights) ? TagAccessRights.Read : tag.AccessRights,
             MqttEnabled = tag.MqttEnabled ?? false,
             MqttTopic = string.IsNullOrWhiteSpace(tag.MqttTopic) ? null : tag.MqttTopic
@@ -328,7 +408,7 @@ app.MapPost("/api/mappings/bulk-add", (MappingAddRequest request, MappingStore s
 
     long version = store.Add(tags);
     return Results.Json(new { version, received = request.Tags.Count });
-});
+    });
 app.MapPost("/api/mappings/update", (MappingUpdateRequest request, MappingStore store) =>
 {
     if (string.IsNullOrWhiteSpace(request.Tag.SourceId) || string.IsNullOrWhiteSpace(request.Tag.DaItemId))
@@ -348,6 +428,7 @@ app.MapPost("/api/mappings/update", (MappingUpdateRequest request, MappingStore 
         Mode = string.IsNullOrWhiteSpace(request.Tag.Mode) ? TagMode.Source : request.Tag.Mode,
         ManualValue = string.IsNullOrWhiteSpace(request.Tag.ManualValue) ? null : request.Tag.ManualValue,
         PollRateMs = request.Tag.PollRateMs ?? 0,
+        DeadbandPct = request.Tag.DeadbandPct ?? 0f,
         Writeable = request.Tag.Writeable ?? false,
         AccessRights = string.IsNullOrWhiteSpace(request.Tag.AccessRights) ? TagAccessRights.Read : request.Tag.AccessRights,
         MqttEnabled = request.Tag.MqttEnabled ?? false,
@@ -714,6 +795,105 @@ static OpcTagBrowseResult BrowseDaTags(DaTagBrowseRequest request)
         request.RemoteDomain);
 }
 
+
+static void TryMigrateLegacyDaLinks(WebApplication app)
+{
+    string daLinksPath = Path.Combine(AppContext.BaseDirectory, "links.json");
+    if (File.Exists(daLinksPath))
+    {
+        return;
+    }
+
+    MappingStore mappingStore = app.Services.GetRequiredService<MappingStore>();
+    DaLinkStore daLinkStore = app.Services.GetRequiredService<DaLinkStore>();
+    (IReadOnlyList<TagMapping> legacyMappings, _) = mappingStore.GetSnapshot();
+
+    DashboardLogStore logStore = app.Services.GetRequiredService<DashboardLogStore>();
+    _ = DaLinkApiHelpers.TryMigrateLegacyDaLinks(
+        daLinkStore,
+        legacyMappings,
+        logStore,
+        app.Logger,
+        out _);
+}
+
+
+static DaLinkDto ToDaLinkDto(DaLinkRule rule)
+{
+    return new DaLinkDto(
+        rule.Id,
+        rule.ProviderSourceId,
+        rule.ProviderItemId,
+        rule.ConsumerSourceId,
+        rule.ConsumerItemId,
+        rule.Enabled,
+        rule.ProviderCanonicalType,
+        rule.ConsumerCanonicalType);
+}
+
+static bool TryBuildValidatedDaLinkRule(
+    DaLinkDto link,
+    Guid? routeId,
+    DaLinkStore linkStore,
+    IDaLinkMetadataResolver metadataResolver,
+    out DaLinkRule rule,
+    out string? error)
+{
+    DaLinkDto normalizedLink = link with
+    {
+        Id = routeId ?? (link.Id == Guid.Empty ? Guid.NewGuid() : link.Id),
+        ProviderSourceId = NormalizeDaLinkSourceId(link.ProviderSourceId),
+        ProviderItemId = link.ProviderItemId?.Trim() ?? string.Empty,
+        ConsumerSourceId = NormalizeDaLinkSourceId(link.ConsumerSourceId),
+        ConsumerItemId = link.ConsumerItemId?.Trim() ?? string.Empty
+    };
+
+    (IReadOnlyList<DaLinkRule> rules, _) = linkStore.GetSnapshot();
+    bool consumerHasProvider = rules.Any(existing =>
+        existing.Id != normalizedLink.Id &&
+        string.Equals(existing.ConsumerSourceId, normalizedLink.ConsumerSourceId, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(existing.ConsumerItemId, normalizedLink.ConsumerItemId, StringComparison.OrdinalIgnoreCase));
+
+    if (!metadataResolver.TryResolve(normalizedLink.ProviderSourceId, normalizedLink.ProviderItemId, out DaTagMetadata providerMetadata))
+    {
+        error = "Provider tag not found.";
+        rule = null!;
+        return false;
+    }
+
+    if (!metadataResolver.TryResolve(normalizedLink.ConsumerSourceId, normalizedLink.ConsumerItemId, out DaTagMetadata consumerMetadata))
+    {
+        error = "Consumer tag not found.";
+        rule = null!;
+        return false;
+    }
+
+    DaLinkDto validatedLink = normalizedLink with
+    {
+        ProviderCanonicalType = providerMetadata.CanonicalType,
+        ConsumerCanonicalType = consumerMetadata.CanonicalType,
+        ProviderAccessRights = providerMetadata.AccessRights,
+        ConsumerAccessRights = consumerMetadata.AccessRights
+    };
+
+    error = DaLinkValidators.Validate(validatedLink, consumerHasProvider);
+    rule = new DaLinkRule(
+        validatedLink.Id,
+        validatedLink.ProviderSourceId,
+        validatedLink.ProviderItemId,
+        validatedLink.ConsumerSourceId,
+        validatedLink.ConsumerItemId,
+        validatedLink.Enabled,
+        validatedLink.ProviderCanonicalType,
+        validatedLink.ConsumerCanonicalType);
+    return error is null;
+}
+
+static string NormalizeDaLinkSourceId(string? sourceId)
+{
+    string value = sourceId?.Trim() ?? string.Empty;
+    return value.Length == 0 ? DaRuntimeSettings.DefaultSourceId : value;
+}
 
 static bool TryParseLogLevel(string? value, out LogLevel level)
 {

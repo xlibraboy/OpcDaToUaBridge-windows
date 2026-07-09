@@ -235,6 +235,7 @@ internal static class DashboardPage
     <button class="tabbtn" data-tab="connection" onclick="showTab('connection')">Connection</button>
     <button class="tabbtn" data-tab="diagnostics" onclick="showTab('diagnostics')">Diagnostics</button>
     <button class="tabbtn" data-tab="tags" onclick="showTab('tags')">Tags</button>
+    <button class="tabbtn" data-tab="links" onclick="showTab('links')">Links</button>
     <button class="tabbtn" data-tab="logs" onclick="showTab('logs')">Logs</button>
     <button class="tabbtn" data-tab="mqtt" onclick="showTab('mqtt')">MQTT</button>
     <button class="tabbtn" data-tab="help" onclick="showTab('help')">Help</button>
@@ -277,7 +278,13 @@ internal static class DashboardPage
         </div>
         <div class="box">
             <div class="box-h">OPC UA Endpoint</div>
-            <div class="box-b"><div class="endpoint" id="uaEndpoint">&#8212;</div><div class="msg" id="uaDiagnostics" style="margin-top:8px">0 nodes · no updates yet</div></div>
+            <div class="box-b">
+                <div class="endpoint" id="uaEndpoint">&#8212;</div>
+                <div class="msg" style="margin-top:6px;color:var(--muted)">Server bind address (0.0.0.0 = all interfaces)</div>
+                <div style="margin-top:10px"><div class="k" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)">Connect from client</div><div class="endpoint" id="uaConnectUrl" style="margin-top:3px">&#8212;</div></div>
+                <div class="msg" style="margin-top:6px;color:var(--muted)">Use this URL in your OPC UA client to connect from another machine</div>
+                <div class="msg" id="uaDiagnostics" style="margin-top:8px">0 nodes · no updates yet</div>
+            </div>
         </div>
     </div>
     <div class="box">
@@ -458,6 +465,39 @@ internal static class DashboardPage
         </div>
     </div>
 </div>
+<div class="view" id="view-links">
+    <div class="box">
+        <div class="box-h">DA Links <span class="msg" id="linksCount" style="margin-left:auto"></span></div>
+        <div class="box-b">
+            <div class="hint" id="linksMessage" style="margin-bottom:10px">Create provider-consumer DA rules here. DA Links are separate from OPC UA tag mappings.</div>
+            <div class="field" style="margin-bottom:10px">
+                <label class="fl">Active Source</label>
+                <span class="msg" id="linkSourceStatus">Select a saved source, then browse tags below.</span>
+            </div>
+            <div class="fp-body" style="margin-bottom:10px">
+                <div class="fp-panel">
+                    <div class="fp-k">Consumer</div>
+                    <div class="fp-meta" id="linkConsumerTarget"><span class="msg">Browse the active source and choose a consumer tag.</span></div>
+                </div>
+                <div class="fp-panel">
+                    <div class="fp-k">Provider</div>
+                    <div class="fp-meta" id="linkProviderTarget"><span class="msg">Browse the active source and choose a provider tag.</span></div>
+                </div>
+            </div>
+            <div class="tag-browser-toolbar">
+                <button class="btn" id="btnBrowseAllLinkTags" type="button">Browse All Tags</button>
+                <button class="btn ghost" id="btnBrowseLinkTags" type="button">Browse Folders</button>
+                <button class="btn" type="button" id="btnSetLink">Save Link</button>
+                <button class="btn ghost" type="button" id="btnClearLink">Delete Saved Link</button>
+                <button class="btn ghost" type="button" id="btnClearLinkSelection">Clear Selection</button>
+                <span class="msg" id="linkBrowseStatus">Use the active source selection from Connection or Tags, then pick consumer/provider tags.</span>
+            </div>
+            <div class="breadcrumb" id="linkBrowseBreadcrumb"><span class="current">root</span></div>
+            <div class="list" id="linkBrowseTree"><span class="msg">Use the active source to browse tags for DA links.</span></div>
+            <div class="list" id="linksList" style="margin-top:10px"></div>
+        </div>
+    </div>
+</div>
 <div class="modal-overlay" id="faceplateOverlay" onclick="if(event.target===this)closeFaceplate()">
     <div class="modal">
         <div class="modal-h">
@@ -622,6 +662,7 @@ document.addEventListener('mouseout', e => { if (e.target.closest('.info') && ti
 const el = id => document.getElementById(id);
 const state = {
     tagPath: '',
+    linkBrowsePath: '',
     sources: [],
     selectedSourceId: 'default',
     editingNewSource: false,
@@ -632,6 +673,8 @@ const state = {
     logsLoaded: false,
     appInfoLoaded: false,
     mappings: [],
+    daLinks: [],
+    linkDraft: { consumer: null, provider: null },
     mappingSort: 'name',
     mappingSortDir: 1,
     mappingFilter: '',
@@ -642,6 +685,14 @@ const state = {
 
 function valueKey(sourceId, itemId) {
     return (sourceId || 'default') + '\u0000' + (itemId || '');
+}
+function tagKey(sourceId, itemId) {
+    return (sourceId || 'default') + '||' + (itemId || '');
+}
+function parseTagKey(key) {
+    const idx = key.indexOf('||');
+    if (idx < 0) return [key, ''];
+    return [key.substring(0, idx), key.substring(idx + 2)];
 }
 
 function currentValue(sourceId, itemId) {
@@ -657,6 +708,94 @@ function renderLiveValue(value) {
     return `<div class="fp-k">Real value</div><div class="fp-v mono" title="${attr(text)}">${esc(text)}</div><div class="fp-meta"><span>${badge(isGood ? 'Good' : 'Bad', isGood ? 'good' : 'bad')} <span class="${isGood ? 'good' : 'bad'}">(${esc(String(quality ?? '—'))})</span></span><span class="timestamp">${esc(timestamp)}</span></div>`;
 }
 
+function linkTagLabel(sourceId, itemId, nameOverride = null) {
+    const mapping = getMapping(sourceId, itemId);
+    const name = nameOverride || (mapping ? (mapping.displayName || mapping.DisplayName || itemId) : itemId);
+    return `${name} (${sourceId || 'default'} · ${itemId})`;
+}
+function renderLinkSourceStatus() {
+    const sourceStatus = el('linkSourceStatus');
+    if (!sourceStatus) return;
+    const source = currentSource();
+    if (source) {
+        const cs = get(source, 'connectionState') || '—';
+        sourceStatus.innerHTML = `${badge(cs, stateClass(cs))} <span class="msg">${esc(source.displayName || source.sourceId)} · ${esc(source.sourceId)}</span>`;
+        return;
+    }
+    if (state.editingNewSource) {
+        sourceStatus.innerHTML = '<span class="msg">Save the new source before browsing DA links.</span>';
+        return;
+    }
+    sourceStatus.innerHTML = '<span class="msg">Select a saved source, then browse tags below.</span>';
+}
+function renderLinkDraftTarget(targetId, selection, emptyMessage) {
+    el(targetId).innerHTML = selection
+        ? `<span>${esc(linkTagLabel(selection.sourceId, selection.itemId, selection.name || null))}</span>`
+        : `<span class="msg">${esc(emptyMessage)}</span>`;
+}
+function renderLinksView() {
+    const links = state.daLinks || [];
+    const consumer = state.linkDraft.consumer;
+    const provider = state.linkDraft.provider;
+    renderLinkSourceStatus();
+    renderLinkDraftTarget('linkConsumerTarget', consumer, 'Browse the active source and choose a consumer tag.');
+    renderLinkDraftTarget('linkProviderTarget', provider, 'Browse the active source and choose a provider tag.');
+    el('btnSetLink').disabled = !(consumer && provider);
+    el('btnClearLink').disabled = !(consumer && findDaLinkByConsumer(consumer.key));
+    el('btnClearLinkSelection').disabled = !(consumer || provider);
+    el('linksCount').textContent = links.length ? links.length + (links.length === 1 ? ' rule' : ' rules') : 'No rules';
+    el('linksList').innerHTML = links.length ? links.map(link => {
+        const consumerSourceId = link.consumerSourceId || link.ConsumerSourceId || 'default';
+        const consumerItemId = link.consumerItemId || link.ConsumerItemId || '';
+        const providerSourceId = link.providerSourceId || link.ProviderSourceId || 'default';
+        const providerItemId = link.providerItemId || link.ProviderItemId || '';
+        const linkId = link.id || link.Id || '';
+        return `<div class="li"><div style="flex:1;min-width:0"><span class="n">${esc(linkTagLabel(consumerSourceId, consumerItemId))}</span></div><span class="pill" style="padding:1px 6px;font-size:10px;background:#e8f0fe;color:#1a73e8">⇠ fed by</span><div style="flex:1;min-width:0"><span class="n">${esc(linkTagLabel(providerSourceId, providerItemId))}</span></div><button class="btn ghost" type="button" data-action="unlink" data-link-id="${attr(linkId)}">Delete</button></div>`;
+    }).join('') : '<span class="msg">No DA links yet. Browse the active source and pick a consumer/provider pair.</span>';
+}
+function findDaLinkByConsumer(consumerKey) {
+    return (state.daLinks || []).find(link => tagKey(link.consumerSourceId || link.ConsumerSourceId || 'default', link.consumerItemId || link.ConsumerItemId || '') === consumerKey) || null;
+}
+async function saveDaLink(consumerKey, providerKey) {
+    if (!consumerKey || !providerKey) { el('linksMessage').textContent = 'Pick both a consumer and a provider.'; return; }
+    if (consumerKey === providerKey) { el('linksMessage').textContent = '✗ A tag cannot link to itself.'; return; }
+    const [consumerSourceId, consumerItemId] = parseTagKey(consumerKey);
+    const [providerSourceId, providerItemId] = parseTagKey(providerKey);
+    const existing = findDaLinkByConsumer(consumerKey);
+    const link = {
+        id: existing ? (existing.id || existing.Id) : '00000000-0000-0000-0000-000000000000',
+        providerSourceId: providerSourceId || 'default',
+        providerItemId,
+        consumerSourceId: consumerSourceId || 'default',
+        consumerItemId,
+        enabled: existing ? ((existing.enabled ?? existing.Enabled) !== false) : true
+    };
+    const url = existing ? '/api/da-links/' + encodeURIComponent(link.id) : '/api/da-links';
+    const method = existing ? 'PUT' : 'POST';
+    const r = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ link })
+    });
+    const p = await r.json();
+    if (!r.ok) throw new Error(p.error || ('HTTP ' + r.status));
+    el('linksMessage').textContent = existing ? '✓ DA link updated.' : '✓ DA link created.';
+    await loadDaLinks();
+}
+async function deleteDaLink(linkId) {
+    if (!linkId) { el('linksMessage').textContent = 'Pick a saved DA link to delete.'; return; }
+    const r = await fetch('/api/da-links/' + encodeURIComponent(linkId), { method: 'DELETE' });
+    const p = await r.json();
+    if (!r.ok) throw new Error(p.error || ('HTTP ' + r.status));
+    el('linksMessage').textContent = '✓ DA link removed.';
+    await loadDaLinks();
+}
+function clearLinkDraftSelection() {
+    state.linkDraft.consumer = null;
+    state.linkDraft.provider = null;
+    el('linksMessage').textContent = 'Selection cleared.';
+    renderLinksView();
+}
 function renderMappingRow(mapping) {
     const sourceId = mapping.sourceId || mapping.SourceId || 'default';
     const item = mapping.daItemId || mapping.DaItemId;
@@ -773,6 +912,7 @@ function updateManualInputState() {
     if (name === 'about') loadAppInfo().catch(e => el('aboutName').textContent = '✗ ' + e.message);
     if (name === 'help') loadHelp().catch(e => el('helpContent').innerHTML = '<span class="msg bad">✗ ' + esc(e.message) + '</span>');
     if (name === 'mqtt') { await loadMqtt(); await loadMqttLogs(); }
+    if (name === 'links') loadDaLinks().catch(e => el('linksMessage').textContent = '✗ ' + e.message);
 }
 function badge(t, c) { return `<span class="badge ${c}">${esc(t)}</span>`; }
 function stateClass(v) {
@@ -840,6 +980,7 @@ async function loadSources() {
     el('cfgUseSubscriptions').checked = state.useSubscriptions;
     if (document.activeElement !== el('cfgUpdateRate')) el('cfgUpdateRate').value = String(state.updateRateMs);
     renderSources();
+    if (document.getElementById('view-links')?.classList.contains('active')) renderLinksView();
 }
 function updateLiveValuesUi() {
     el('toggleLiveValues').textContent = state.liveValuesEnabled ? 'Disable Live Data' : 'Enable Live Data';
@@ -1106,8 +1247,9 @@ async function refresh() {
         el('updateRate').textContent = updateRateMs + ' ms';
         el('pollUtilizationFill').style.width = pollUtilization.width;
         el('pollUtilizationFill').className = pollUtilization.className;
-        el('pollUtilizationText').textContent = pollUtilization.text;
-        el('pollSaturation').textContent = pollSaturation.text;
+        el('uaEndpoint').textContent = get(ua, 'endpointUrl') || '—';
+        el('uaConnectUrl').textContent = get(ua, 'connectUrl') || get(ua, 'endpointUrl') || '—';
+        el('uaDiagnostics').textContent = formatUaDiagnostics(ua);
         el('pollSaturation').className = pollSaturation.className;
         if (document.activeElement !== el('cfgUpdateRate')) el('cfgUpdateRate').value = String(updateRateMs);
         el('mappingCount').textContent = (get(b, 'mappingCount') ?? 0) + ' tags';
@@ -1237,13 +1379,19 @@ async function refresh() {
         }
     }
 }
+async function loadDaLinks() {
+    const p = await (await fetch('/api/da-links', { cache: 'no-store' })).json();
+    state.daLinks = p.links || [];
+    if (document.getElementById('view-links')?.classList.contains('active')) renderLinksView();
+}
+
 async function loadMappings() {
     const p = await (await fetch('/api/mappings', { cache: 'no-store' })).json();
     const mappings = p.mappings || [];
     state.mappings = mappings;
     const view = applyMappingView(mappings);
-    el('mapCount').textContent = view.length + (view.length !== mappings.length ? ' / ' + mappings.length + ' mappings' : ' mappings');
     el('mappedList').innerHTML = renderMappingRows(view);
+    if (document.getElementById('view-links')?.classList.contains('active')) renderLinksView();
 }
 async function loadMqtt() {
     try {
@@ -1400,7 +1548,9 @@ function pickSource(sourceId) {
     el('tagTree').innerHTML = '<span class="msg">Browse the active source to load tags.</span>';
     el('tagStatus').textContent = 'Browse all tags, or open folders one level at a time.';
     renderCrumb();
+    resetLinkBrowser();
     renderSources();
+    if (document.getElementById('view-links')?.classList.contains('active')) renderLinksView();
 }
 async function saveSource() {
     const sourceId = el('cfgSourceId').value.trim();
@@ -1507,6 +1657,89 @@ function pickServer(progId, host) {
     el('cfgProgId').value = progId;
     el('cfgHost').value = host;
     el('cfgMessage').textContent = 'Selected server; save source to apply.';
+}
+function renderLinkCrumb() {
+    const bc = el('linkBrowseBreadcrumb');
+    if (!state.linkBrowsePath) {
+        bc.innerHTML = '<span class="current">root</span>';
+        return;
+    }
+    const parts = state.linkBrowsePath.split('.');
+    let html = '<a data-link-crumb="">root</a><span class="sep">/</span>';
+    let acc = '';
+    for (let i = 0; i < parts.length; i++) {
+        acc = acc ? acc + '.' + parts[i] : parts[i];
+        if (i < parts.length - 1) {
+            html += `<a data-link-crumb="${attr(acc)}">${esc(parts[i])}</a><span class="sep">/</span>`;
+        } else {
+            html += `<span class="current">${esc(parts[i])}</span>`;
+        }
+    }
+    bc.innerHTML = html;
+}
+function resetLinkBrowser() {
+    state.linkBrowsePath = '';
+    renderLinkCrumb();
+    el('linkBrowseTree').innerHTML = '<span class="msg">Use the active source to browse tags for DA links.</span>';
+    el('linkBrowseStatus').textContent = 'Use the active source selection from Connection or Tags, then pick consumer/provider tags.';
+}
+function setLinkDraftSelection(role, sourceId, itemId, name) {
+    state.linkDraft[role] = {
+        key: tagKey(sourceId, itemId),
+        sourceId: sourceId || 'default',
+        itemId,
+        name: name || itemId
+    };
+    const roleName = role === 'consumer' ? 'Consumer' : 'Provider';
+    el('linksMessage').textContent = roleName + ' selected from source ' + (sourceId || 'default') + '.';
+    renderLinksView();
+}
+async function browseLinkTags(path, recursive = false) {
+    const source = currentSource();
+    if (!source || state.editingNewSource) {
+        el('linkBrowseTree').innerHTML = '<span class="msg">Select or save a source before browsing DA links.</span>';
+        el('linkBrowseBreadcrumb').innerHTML = '';
+        return;
+    }
+    state.linkBrowsePath = path || '';
+    renderLinkCrumb();
+    el('linkBrowseTree').innerHTML = '<span class="msg">Browsing…</span>';
+    el('linkBrowseStatus').textContent = recursive ? 'Loading all tags…' : 'Loading folder…';
+    const body = {
+        sourceId: source.sourceId,
+        progId: source.progId,
+        host: source.host || 'localhost',
+        path: state.linkBrowsePath,
+        recursive,
+        remoteUsername: source.remoteUsername || null,
+        remotePassword: null,
+        remoteDomain: source.remoteDomain || null
+    };
+    const p = await (await fetch('/api/da/tags', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+    if (p.error) throw new Error(p.error);
+    const branches = p.branches || [];
+    const tags = p.tags || [];
+    const rows = [];
+    if (state.linkBrowsePath) {
+        const parent = state.linkBrowsePath.includes('.') ? state.linkBrowsePath.substring(0, state.linkBrowsePath.lastIndexOf('.')) : '';
+        rows.push(`<div class="li clickable" data-action="open-link-branch" data-path="${attr(parent)}"><span class="icon folder">&#9650;</span><div style="flex:1"><div class="n">..</div><div class="p">Up one level</div></div></div>`);
+    }
+    for (const branch of branches) {
+        const child = state.linkBrowsePath ? state.linkBrowsePath + '.' + branch : branch;
+        rows.push(`<div class="li clickable" data-action="open-link-branch" data-path="${attr(child)}"><span class="icon folder">&#128193;</span><div style="flex:1"><div class="n">${esc(branch)}</div><div class="p">folder</div></div></div>`);
+    }
+    for (const tag of tags) {
+        const itemId = tag.itemId || tag.ItemId;
+        const name = tag.name || tag.Name || itemId;
+        const key = tagKey(source.sourceId, itemId);
+        const existing = findDaLinkByConsumer(key);
+        const isConsumer = state.linkDraft.consumer && state.linkDraft.consumer.key === key;
+        const isProvider = state.linkDraft.provider && state.linkDraft.provider.key === key;
+        rows.push(`<div class="li"><span class="icon tag">&#9878;</span><div style="flex:1"><div class="n">${esc(name)}</div><div class="p">${esc(itemId)}</div></div><div class="li-actions">${existing ? '<span class="mapped-badge">Linked consumer</span>' : ''}${isConsumer ? '<span class="pill" style="padding:1px 6px;font-size:10px">Consumer</span>' : ''}${isProvider ? '<span class="pill" style="padding:1px 6px;font-size:10px">Provider</span>' : ''}<button class="btn ghost" data-action="pick-link-consumer" data-source-id="${attr(source.sourceId)}" data-item-id="${attr(itemId)}" data-name="${attr(name)}">Consumer</button><button class="btn ghost" data-action="pick-link-provider" data-source-id="${attr(source.sourceId)}" data-item-id="${attr(itemId)}" data-name="${attr(name)}">Provider</button></div></div>`);
+    }
+    el('linkBrowseTree').innerHTML = rows.length ? rows.join('') : '<span class="msg">No tags or folders here.</span>';
+    el('linkBrowseStatus').textContent = branches.length + ' folders · ' + tags.length + ' tags';
+    renderLinksView();
 }
 function renderCrumb() {
     const bc = el('tagBreadcrumb');
@@ -1644,6 +1877,26 @@ function bindDynamicButtons() {
         if (!link) return;
         browseTags(link.dataset.crumb || '').catch(e => el('tagTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`);
     });
+    el('linkBrowseTree').addEventListener('click', event => {
+        const actionEl = event.target.closest('[data-action]');
+        if (!actionEl) return;
+        if (actionEl.dataset.action === 'open-link-branch') {
+            browseLinkTags(actionEl.dataset.path || '').catch(e => el('linkBrowseTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`);
+            return;
+        }
+        if (actionEl.tagName === 'BUTTON' && actionEl.dataset.action === 'pick-link-consumer') {
+            setLinkDraftSelection('consumer', actionEl.dataset.sourceId || '', actionEl.dataset.itemId || '', actionEl.dataset.name || '');
+            return;
+        }
+        if (actionEl.tagName === 'BUTTON' && actionEl.dataset.action === 'pick-link-provider') {
+            setLinkDraftSelection('provider', actionEl.dataset.sourceId || '', actionEl.dataset.itemId || '', actionEl.dataset.name || '');
+        }
+    });
+    el('linkBrowseBreadcrumb').addEventListener('click', event => {
+        const link = event.target.closest('a[data-link-crumb]');
+        if (!link) return;
+        browseLinkTags(link.dataset.linkCrumb || '').catch(e => el('linkBrowseTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`);
+    });
     el('mappedList').addEventListener('click', event => {
         const row = event.target.closest('[data-action="open-faceplate"]');
         if (!row) return;
@@ -1780,9 +2033,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         state.logsLoaded = false;
         loadLogs(true).catch(e => el('logMessage').textContent = '✗ ' + e.message);
     });
+    el('btnBrowseLinkTags').addEventListener('click', () => browseLinkTags('').catch(e => el('linkBrowseTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
+    el('btnBrowseAllLinkTags').addEventListener('click', () => browseLinkTags('', true).catch(e => el('linkBrowseTree').innerHTML = `<span class="bad">${esc(e.message)}</span>`));
+    el('btnSetLink').addEventListener('click', () => saveDaLink(state.linkDraft.consumer ? state.linkDraft.consumer.key : '', state.linkDraft.provider ? state.linkDraft.provider.key : '').catch(e => el('linksMessage').textContent = '✗ ' + e.message));
+    el('btnClearLink').addEventListener('click', () => {
+        const consumerKey = state.linkDraft.consumer ? state.linkDraft.consumer.key : '';
+        const existing = findDaLinkByConsumer(consumerKey);
+        deleteDaLink(existing ? (existing.id || existing.Id || '') : '').catch(e => el('linksMessage').textContent = '✗ ' + e.message);
+    });
+    el('btnClearLinkSelection').addEventListener('click', () => clearLinkDraftSelection());
+    el('linksList').addEventListener('click', event => {
+        const btn = event.target.closest('button[data-action="unlink"]');
+        if (!btn) return;
+        deleteDaLink(btn.dataset.linkId || '').catch(e => el('linksMessage').textContent = '✗ ' + e.message);
+    });
     bindDynamicButtons();
     const initTab = location.hash.slice(1);
-    if (['monitor','connection','diagnostics','tags','logs','help','about'].includes(initTab)) showTab(initTab);
+    if (['monitor','connection','diagnostics','tags','links','logs','help','about'].includes(initTab)) showTab(initTab);
     await loadSources();
     await loadMappings();
     updateLiveValuesUi();

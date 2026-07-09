@@ -7,7 +7,7 @@ internal static class HelpContent
 
 - Use **Connection** to configure server connections (OPC DA address, credentials, default update rate, and DA subscriptions toggle).
 - Use **Tags** to browse DA items, create DA → OPC UA mappings, and set per-tag Access Rights, Update Rate, Deadband, Description, and Simulation.
-- Use **Monitor** to confirm source reads, live values, rate-group alarms, OPC UA writes, and resource telemetry.
+- Use **Links** to connect tags — a consumer tag receives values from a provider tag in addition to its own DA source.
 - Use **Logs** to review warnings and errors from the bridge and UA server.
 ---
 
@@ -74,6 +74,7 @@ internal static class HelpContent
   │  Monitor ──► stats, source status, alarm bar, live values table      │
 │  Connection ──► server connection config, discovery, default rate, subscriptions toggle  │
 │  Tags ──► DA browser, mappings, faceplate (access rights, update rate, simulation)  │
+│  Links ──► connected tags: set/clear provider→consumer links, view all connections   │
   │  Help ──► this page                                                  │
   │                                                                      │
   │  HTTP API: /api/dashboard, /api/mappings, /api/da/sources, etc.      │
@@ -88,6 +89,22 @@ internal static class HelpContent
 - **UA writes** (writeable mappings) flow: UA Client → BridgeNodeManager → WriteQueue → per-source consumer → `IOPCSyncIO.Write` → DA Server.
 - UA clients subscribe to UA nodes and receive notifications when values change.
 - The web dashboard reads from `/api/dashboard` (1s polling) to display live status and resource telemetry.
+
+## OPC UA Endpoint — Bind vs Connect
+
+The **Endpoint URL** in Connection settings has two faces:
+
+| Field | Value | Purpose |
+|---|---|---|
+| **Endpoint (config)** | `opc.tcp://0.0.0.0:4840/OpcDaToUaBridge` | The server's **bind address**. `0.0.0.0` means "listen on all network interfaces" (localhost + LAN + VPN). This is the correct value for a server. |
+| **Connect from client** | `opc.tcp://<hostname>:4840/OpcDaToUaBridge` | The URL you enter in an **OPC UA client** to connect. The dashboard shows this with the host's real name filled in. |
+
+**Do not** put `0.0.0.0` in your client's connect string — `0.0.0.0` means "this machine" to a client, which is the *client's* own machine, not the bridge. Always use the bridge host's IP address or hostname:
+
+- Same machine: `opc.tcp://localhost:4840/OpcDaToUaBridge`
+- Another machine on the LAN: `opc.tcp://192.168.x.x:4840/OpcDaToUaBridge` or `opc.tcp://HOSTNAME:4840/OpcDaToUaBridge`
+
+The **Monitor** tab shows both values: the configured bind address and the derived client connect URL.
 
 ## Unified UA Address Space
 
@@ -214,6 +231,48 @@ Set via the faceplate → **Simulation** tab. Independent of Access Rights:
 
 - A tag can be **Disabled** (Setup tab → Enabled checkbox). Disabled tags are not read from DA and not published to UA.
 - Open a tag's faceplate (Tags tab → click a tag) to change access rights, simulation, update rate, or description.
+
+---
+
+# DA Links
+
+DA Links are a **separate subsystem** from DA → UA mappings. A provider change on one OPC DA source can write directly to a consumer on another OPC DA source through the bridge's shared DA runtime without changing the mapping payload for that consumer.
+
+## How it works
+
+- The **provider** tag is read from its DA source normally and must have Access Rights that include **Read**.
+- The **consumer** tag keeps its own mapping and must have Access Rights that include **Write** or **Read-Write** so the bridge can forward provider changes into its DA server.
+- DA Links share the bridge runtime with mappings, so cross-source forwarding works even when the provider and consumer live on different OPC DA servers.
+- Runtime forwarding is driven by stored `DaLinkRule` entries. Legacy `providerSourceId` / `providerDaItemId` fields exist only for migration from older mapping files.
+
+## Setting up links
+
+1. Open the **Links** tab.
+2. Pick a **Consumer** tag.
+3. Pick a **Provider** tag.
+4. Click **Save Link**.
+5. The link appears in the Links list and can be removed with **Delete Link**.
+
+## Rules
+
+- A tag cannot link to itself.
+- Cross-source links are supported.
+- Provider and consumer must use the same canonical OPC DA type.
+- v1 allows only **one provider per consumer**.
+- Clearing a DA Link stops forwarding immediately and leaves the DA → UA mapping unchanged.
+
+## Runtime flow
+
+```
+  DA Server A                          DA Server B
+      │                                    │
+  Provider Tag                         Consumer Tag
+      │                                    │
+      ▼                                    ▼
+  BridgeWorker poll/subscription      BridgeWorker mapping/runtime state
+      │                                    │
+      └── DaLinkRule match ───────────────► WriteQueue(B) ──► IOPCSyncIO.Write
+```
 
 ---
 
@@ -739,5 +798,6 @@ Always preserve `pki/` across updates. It's listed in the update guide as "never
 | `pollRateMs` | `0` | Per-tag update rate in ms (0 = source default) |
 | `deadbandPct` | `0` | Deadband % for subscription filtering (0–100; 0 = no filter) |
 | `writeable` | `false` | Derived from accessRights — true for Read-Write and Write |
+
 """;
 }
