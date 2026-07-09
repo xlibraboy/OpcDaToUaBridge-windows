@@ -41,7 +41,7 @@ public sealed class MqttBridge : IMqttBridge, IAsyncDisposable
 
         MqttClientOptionsBuilder clientBuilder = new MqttClientOptionsBuilder()
             .WithClientId(options.ClientId)
-            .WithTcpServer(StripScheme(brokerUrl), PortFromUrl(brokerUrl, useTls));
+            .WithTcpServer(HostFromUrl(brokerUrl), PortFromUrl(brokerUrl, useTls));
 
         if (!string.IsNullOrWhiteSpace(options.UserName))
         {
@@ -145,11 +145,44 @@ public sealed class MqttBridge : IMqttBridge, IAsyncDisposable
         return idx >= 0 ? url[(idx + 3)..] : url;
     }
 
+    private static string HostFromUrl(string url)
+    {
+        string authority = StripScheme(url);
+        if (authority.StartsWith("[", StringComparison.Ordinal))
+        {
+            int close = authority.IndexOf(']');
+            if (close >= 0)
+            {
+                return authority.Substring(1, close - 1);
+            }
+        }
+
+        int colon = authority.LastIndexOf(':');
+        if (colon >= 0 && authority.IndexOf('/', colon) < 0)
+        {
+            authority = authority.Substring(0, colon);
+        }
+
+        return authority;
+    }
+
     private static int PortFromUrl(string url, bool useTls)
     {
-        string host = StripScheme(url);
-        int colon = host.LastIndexOf(':');
-        if (colon >= 0 && int.TryParse(host[(colon + 1)..], out int port))
+        string authority = StripScheme(url);
+        if (authority.StartsWith("[", StringComparison.Ordinal))
+        {
+            int close = authority.IndexOf(']');
+            if (close >= 0 && close + 1 < authority.Length && authority[close + 1] == ':'
+                && int.TryParse(authority[(close + 2)..], out int ipv6Port))
+            {
+                return ipv6Port;
+            }
+
+            return useTls ? 8883 : 1883;
+        }
+
+        int colon = authority.LastIndexOf(':');
+        if (colon >= 0 && authority.IndexOf('/', colon) < 0 && int.TryParse(authority[(colon + 1)..], out int port))
         {
             return port;
         }
