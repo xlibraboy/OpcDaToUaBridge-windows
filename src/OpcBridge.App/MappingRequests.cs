@@ -13,9 +13,7 @@ public sealed record MappingTagDto(
     int? PollRateMs = null,
     float? DeadbandPct = null,
     bool? Writeable = null,
-    string? AccessRights = null,
-    string? ProviderSourceId = null,
-    string? ProviderDaItemId = null);
+    string? AccessRights = null);
 
 public sealed record MappingAddRequest(List<MappingTagDto>? Tags);
 

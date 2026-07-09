@@ -755,12 +755,9 @@ function renderMappingRow(mapping) {
     else { accessBadge = badge(access + (simulated && access !== 'Write' ? ' / Sim' : ''), access === 'Read' ? 'good' : access === 'Read-Write' ? 'partial' : 'warn'); }
     const rateBadge = pollRate > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">${pollRate}ms</span>` : '';
     const deadbandBadge = deadband > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">db ${deadband}%</span>` : '';
-    const provSrc = mapping.providerSourceId || mapping.ProviderSourceId || '';
-    const provItem = mapping.providerDaItemId || mapping.ProviderDaItemId || '';
-    const fedBadge = provSrc ? `<span class="pill" style="padding:1px 6px;font-size:10px;background:#e8f0fe;color:#1a73e8" title="Fed by ${esc(provSrc)} · ${esc(provItem)}">⇠ fed</span>` : '';
     const desc = (mapping.description || mapping.Description || '').trim();
     const descIcon = desc ? `<span class="li-desc" title="${attr(desc)}" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">&#8505;</span>` : '';
-    return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">${descIcon}<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="n">${esc(name)}</span> <span class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</span></div><div class="li-badge">${accessBadge}${fedBadge}${deadbandBadge}${rateBadge}</div></div>`;
+    return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">${descIcon}<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="n">${esc(name)}</span> <span class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</span></div><div class="li-badge">${accessBadge}${deadbandBadge}${rateBadge}</div></div>`;
 }
 
 function renderMappingRows(mappings) {
@@ -1404,9 +1401,7 @@ async function updateMapping(sourceId, itemId, mutate) {
         pollRateMs: mapping.pollRateMs ?? mapping.PollRateMs ?? 0,
         deadbandPct: Number(mapping.deadbandPct ?? mapping.DeadbandPct ?? 0),
         writeable: (mapping.writeable ?? mapping.Writeable) === true,
-        accessRights: mapping.accessRights || mapping.AccessRights || 'Read',
-        providerSourceId: mapping.providerSourceId || mapping.ProviderSourceId || null,
-        providerDaItemId: mapping.providerDaItemId || mapping.ProviderDaItemId || null
+        accessRights: mapping.accessRights || mapping.AccessRights || 'Read'
     };
     mutate(payload);
     const r = await fetch('/api/mappings/update', {

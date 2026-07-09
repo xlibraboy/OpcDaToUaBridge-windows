@@ -234,75 +234,45 @@ Set via the faceplate → **Simulation** tab. Independent of Access Rights:
 
 ---
 
-# Connected Tags (Provider → Consumer)
+# DA Links
 
-A tag can **receive values from another tag** in addition to its own DA source. This is called a **provider link**.
+DA Links are a **separate subsystem** from DA → UA mappings. A provider change on one OPC DA source can write directly to a consumer on another OPC DA source through the bridge's shared DA runtime without changing the mapping payload for that consumer.
 
 ## How it works
 
-- The **provider** tag is read from its DA source normally (Access Rights must include **Read**).
-- The **consumer** tag keeps its own DA poll **and** receives forwarded writes from the provider (Access Rights must include **Write** or **Read-Write**).
-- Each time the provider's value changes, the bridge enqueues a write to each consumer via the per-source `WriteQueue`.
-- Cross-source links are supported — provider and consumer can be on different DA servers.
-- A tag cannot link to itself (self-link is rejected).
+- The **provider** tag is read from its DA source normally and must have Access Rights that include **Read**.
+- The **consumer** tag keeps its own mapping and must have Access Rights that include **Write** or **Read-Write** so the bridge can forward provider changes into its DA server.
+- DA Links share the bridge runtime with mappings, so cross-source forwarding works even when the provider and consumer live on different OPC DA servers.
+- Runtime forwarding is driven by stored `DaLinkRule` entries. Legacy `providerSourceId` / `providerDaItemId` fields exist only for migration from older mapping files.
 
-## Data flow with a link
+## Setting up links
+
+1. Open the **Links** tab.
+2. Pick a **Consumer** tag.
+3. Pick a **Provider** tag.
+4. Click **Save Link**.
+5. The link appears in the Links list and can be removed with **Delete Link**.
+
+## Rules
+
+- A tag cannot link to itself.
+- Cross-source links are supported.
+- Provider and consumer must use the same canonical OPC DA type.
+- v1 allows only **one provider per consumer**.
+- Clearing a DA Link stops forwarding immediately and leaves the DA → UA mapping unchanged.
+
+## Runtime flow
 
 ```
   DA Server A                          DA Server B
       │                                    │
   Provider Tag                         Consumer Tag
-  (Read, 1000ms)                       (Read-Write, 1000ms)
       │                                    │
       ▼                                    ▼
-  BridgeWorker.PollSourceAsync(A)    BridgeWorker.PollSourceAsync(B)
+  BridgeWorker poll/subscription      BridgeWorker mapping/runtime state
       │                                    │
-      ├── value read ──► UA node            ├── value read ──► UA node
-      │                                    │
-      └── ForwardToConsumers ──► WriteQueue(B) ──► IOPCSyncIO.Write
-          (provider value forwarded          (consumer gets provider's value
-           to consumer's DA server)          written to its own DA server)
+      └── DaLinkRule match ───────────────► WriteQueue(B) ──► IOPCSyncIO.Write
 ```
-
-## Setting up a link
-
-Two ways to create a provider → consumer link:
-
-### Via the Links tab
-
-1. Open the **Links** tab.
-2. Pick a **Consumer** tag from the first dropdown.
-3. Pick a **Provider** tag from the second dropdown.
-4. Click **Set Link**.
-5. The link appears in the list with a "⇠ fed by" indicator.
-6. Click **Unlink** on any link to remove it.
-
-### Via the faceplate
-
-1. Open the **Tags** tab, click a tag to open its faceplate.
-2. Go to the **Setup** subtab.
-3. Pick a provider from the **Provider** dropdown (or "— none —" to remove).
-4. Click **Apply**.
-
-## Visual indicators
-
-- Tags tab: consumer rows show a blue **⇠ fed** badge with a tooltip naming the provider.
-- Links tab: each link row shows consumer ⇠ fed by provider, with an **Unlink** button.
-- UA node description: shows "fed by {providerSourceId}/{providerDaItemId}".
-
-## Rules
-
-| Provider Access | Consumer Access | Link allowed? |
-|-----------------|-----------------|---------------|
-| Read | Read-Write | ✅ Yes |
-| Read | Write | ✅ Yes |
-| Read-Write | Read-Write | ✅ Yes (provider is read) |
-| Write | Read-Write | ❌ No (provider has no Read) |
-| Read | Read | ❌ No (consumer has no Write) |
-
-- If the provider is later set to **Write**-only, forwarding stops (no values to forward).
-- If the consumer is later set to **Read**-only, forwarding stops (cannot accept writes).
-- Clearing a link (setting Provider to "— none —") immediately stops forwarding.
 
 ---
 
@@ -796,7 +766,6 @@ Always preserve `pki/` across updates. It's listed in the update guide as "never
 | `pollRateMs` | `0` | Per-tag update rate in ms (0 = source default) |
 | `deadbandPct` | `0` | Deadband % for subscription filtering (0–100; 0 = no filter) |
 | `writeable` | `false` | Derived from accessRights — true for Read-Write and Write |
-| `providerSourceId` | `null` | Source ID of the provider tag that feeds this consumer (null = no link) |
-| `providerDaItemId` | `null` | DA Item ID of the provider tag (null = no link) |
+
 """;
 }

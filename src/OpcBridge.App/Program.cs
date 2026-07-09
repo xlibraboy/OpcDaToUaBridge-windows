@@ -354,8 +354,6 @@ app.MapPost("/api/mappings/add", (MappingAddRequest request, MappingStore store)
                 {
                     SourceId = tag.SourceId,
                     DaItemId = tag.DaItemId,
-                    ProviderSourceId = tag.ProviderSourceId,
-                    ProviderDaItemId = tag.ProviderDaItemId,
                     DisplayName = tag.DisplayName ?? string.Empty,
                     Description = tag.Description,
                     DataType = tag.DataType ?? "Auto",
@@ -384,8 +382,6 @@ app.MapPost("/api/mappings/bulk-add", (MappingAddRequest request, MappingStore s
                 {
                     SourceId = string.IsNullOrWhiteSpace(tag.SourceId) ? "default" : tag.SourceId,
                     DaItemId = tag.DaItemId ?? string.Empty,
-                    ProviderSourceId = tag.ProviderSourceId,
-                    ProviderDaItemId = tag.ProviderDaItemId,
                     Description = tag.Description,
                     DisplayName = tag.DisplayName ?? string.Empty,
                     DataType = tag.DataType ?? "Auto",
@@ -395,6 +391,7 @@ app.MapPost("/api/mappings/bulk-add", (MappingAddRequest request, MappingStore s
                     ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue,
                     PollRateMs = tag.PollRateMs ?? 0,
                     Writeable = tag.Writeable ?? false,
+                    DeadbandPct = tag.DeadbandPct ?? 0f,
                     AccessRights = string.IsNullOrWhiteSpace(tag.AccessRights) ? TagAccessRights.Read : tag.AccessRights
                 })
                 .Where(tag => !string.IsNullOrWhiteSpace(tag.DaItemId));
@@ -413,8 +410,6 @@ app.MapPost("/api/mappings/update", (MappingUpdateRequest request, MappingStore 
         {
             SourceId = request.Tag.SourceId,
             DaItemId = request.Tag.DaItemId,
-            ProviderSourceId = request.Tag.ProviderSourceId,
-            ProviderDaItemId = request.Tag.ProviderDaItemId,
             DisplayName = request.Tag.DisplayName ?? string.Empty,
             Description = request.Tag.Description,
             DataType = request.Tag.DataType ?? "Auto",
@@ -423,6 +418,7 @@ app.MapPost("/api/mappings/update", (MappingUpdateRequest request, MappingStore 
             Mode = string.IsNullOrWhiteSpace(request.Tag.Mode) ? TagMode.Source : request.Tag.Mode,
             ManualValue = string.IsNullOrWhiteSpace(request.Tag.ManualValue) ? null : request.Tag.ManualValue,
             PollRateMs = request.Tag.PollRateMs ?? 0,
+            DeadbandPct = request.Tag.DeadbandPct ?? 0f,
             Writeable = request.Tag.Writeable ?? false,
             AccessRights = string.IsNullOrWhiteSpace(request.Tag.AccessRights) ? TagAccessRights.Read : request.Tag.AccessRights
         };
