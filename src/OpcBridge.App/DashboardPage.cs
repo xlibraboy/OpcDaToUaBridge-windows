@@ -553,17 +553,17 @@ internal static class DashboardPage
 <div class="view" id="view-mqtt">
     <div class="grid2">
         <div class="box">
-            <div class="box-h">MQTT Broker</div>
+            <div class="box-h">MQTT Broker <span class="info" data-tip="Connects the bridge to an MQTT broker. Enabled tags are published as UA-mirror values and inbound messages are written back through the UA path. Settings are saved to mqtt.json and applied on Save Config + Connect.">i</span></div>
             <div class="box-b">
-                <div class="field"><label class="fl">Enabled</label><input type="checkbox" id="mqttEnabled"></div>
-                <div class="field"><label class="fl">Broker URL</label><input type="text" id="mqttBrokerUrl" placeholder="tcp://localhost:1883"></div>
-                <div class="field"><label class="fl">Client ID</label><input type="text" id="mqttClientId"></div>
-                <div class="field"><label class="fl">Username</label><input type="text" id="mqttUser"></div>
-                <div class="field"><label class="fl">Password</label><input type="password" id="mqttPass"></div>
-                <div class="field"><label class="fl">TLS</label><input type="checkbox" id="mqttTls"></div>
-                <div class="field"><label class="fl">Ignore Cert</label><input type="checkbox" id="mqttIgnoreCert"></div>
-                <div class="field"><label class="fl">Topic Prefix</label><input type="text" id="mqttPrefix" placeholder="bridge/tags"></div>
-                <div class="field"><label class="fl">Payload Fields</label>
+                <div class="field"><label class="fl">Enabled <span class="info" data-tip="Master switch. When ON the bridge connects to the broker on startup (and on Save/Connect) and publishes every tag with MQTT enabled.">i</span></label><input type="checkbox" id="mqttEnabled"></div>
+                <div class="field"><label class="fl">Broker URL <span class="info" data-tip="Broker address, e.g. tcp://localhost:1883 or mqtts://host:8883. The scheme selects plaintext (tcp) or TLS (mqtts).">i</span></label><input type="text" id="mqttBrokerUrl" placeholder="tcp://localhost:1883"></div>
+                <div class="field"><label class="fl">Client ID <span class="info" data-tip="Unique client identifier the broker uses to track the session. Keep it unique per bridge instance.">i</span></label><input type="text" id="mqttClientId"></div>
+                <div class="field"><label class="fl">Username <span class="info" data-tip="Broker auth username, if required. Leave blank for anonymous access.">i</span></label><input type="text" id="mqttUser"></div>
+                <div class="field"><label class="fl">Password <span class="info" data-tip="Broker auth password, if required. Stored in mqtt.json in plaintext — acceptable for a trusted LAN dashboard only.">i</span></label><input type="password" id="mqttPass"></div>
+                <div class="field"><label class="fl">TLS <span class="info" data-tip="Use TLS/SSL for the broker connection. Requires a broker listening on mqtts:// (usually port 8883).">i</span></label><input type="checkbox" id="mqttTls"></div>
+                <div class="field"><label class="fl">Ignore Cert <span class="info" data-tip="Skip broker certificate validation. For testing self-signed certificates only; never enable on untrusted networks.">i</span></label><input type="checkbox" id="mqttIgnoreCert"></div>
+                <div class="field"><label class="fl">Topic Prefix <span class="info" data-tip="Prefix for all topics, e.g. bridge/tags. Publish topic = {prefix}/{sourceId}/{daItemId}; subscribe filter = {prefix}/#. A per-tag override topic can be set in the tag faceplate.">i</span></label><input type="text" id="mqttPrefix" placeholder="bridge/tags"></div>
+                <div class="field"><label class="fl">Payload Fields <span class="info" data-tip="Which fields are included in each published JSON payload. Default {v,t} = value + timestamp. Quality/SourceId/ItemId/DisplayName/DataType add more context.">i</span></label>
                     <select id="mqttFields">
                         <option>Value, Timestamp</option>
                         <option>Value, Timestamp, Quality</option>
@@ -580,16 +580,16 @@ internal static class DashboardPage
             </div>
         </div>
         <div class="box">
-            <div class="box-h">Connection</div>
+            <div class="box-h">Connection <span class="info" data-tip="Live broker connection status and counters since the bridge started.">i</span></div>
             <div class="box-b">
-                <div class="stat"><div class="k">State</div><div class="v" id="mqttState">Disconnected</div><div class="s" id="mqttLastError">No errors</div></div>
-                <div class="stat"><div class="k">Published</div><div class="v" id="mqttPublished">0</div></div>
-                <div class="stat"><div class="k">Received</div><div class="v" id="mqttReceived">0</div></div>
+                <div class="stat"><div class="k">State <span class="info" data-tip="Broker connection state: Disconnected, Connecting, Connected, or Faulted (connection failed or dropped).">i</span></div><div class="v" id="mqttState">Disconnected</div><div class="s" id="mqttLastError">No errors</div></div>
+                <div class="stat"><div class="k">Published <span class="info" data-tip="Total values published to the broker since start — one per enabled tag update.">i</span></div><div class="v" id="mqttPublished">0</div></div>
+                <div class="stat"><div class="k">Received <span class="info" data-tip="Total inbound messages from the broker. Includes the bridge's own publishes echoed back if it subscribes to its own prefix.">i</span></div><div class="v" id="mqttReceived">0</div></div>
             </div>
         </div>
     </div>
     <div class="box" style="margin-top:14px">
-        <div class="box-h">Traffic Monitor <span class="msg" style="margin-left:auto"><button class="btn ghost" onclick="loadMqttLogs()">Refresh</button></span></div>
+        <div class="box-h">Traffic Monitor <span class="info" data-tip="Recent publish (PUB) and subscribe (SUB) messages. PUB = value sent to broker; SUB = inbound message applied via the UA write path.">i</span> <span class="msg" style="margin-left:auto"><button class="btn ghost" onclick="loadMqttLogs()">Refresh</button></span></div>
         <div class="box-b"><div class="list" id="mqttTraffic"><span class="msg">No MQTT traffic yet.</span></div></div>
     </div>
 </div>
