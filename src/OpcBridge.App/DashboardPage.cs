@@ -470,6 +470,7 @@ internal static class DashboardPage
                 <button class="fp-subtab active" type="button" data-fptab="basic" onclick="showFpTab('basic')">Basic</button>
                 <button class="fp-subtab" type="button" data-fptab="setup" onclick="showFpTab('setup')">Setup</button>
                 <button class="fp-subtab" type="button" data-fptab="sim" onclick="showFpTab('sim')">Simulation</button>
+                <button class="fp-subtab" type="button" data-fptab="mqtt" onclick="showFpTab('mqtt')">MQTT</button>
             </div>
             <div class="fp-tabpane" id="fp-pane-basic">
                 <div class="field"><label class="fl">Tag Name</label><input type="text" id="fpDisplayName" style="flex:1"></div>
@@ -482,14 +483,17 @@ internal static class DashboardPage
                 <div class="field"><label class="fl">Enabled</label><input type="checkbox" id="fpEnabled" data-action="toggle-tag-enabled"></div>
                 <div class="field"><label class="fl">Update Rate</label><select id="fpPollRate" data-action="tag-poll-rate"><option value="0">Source Default</option><option value="100">100 ms</option><option value="250">250 ms</option><option value="500">500 ms</option><option value="1000">1 s</option><option value="2000">2 s</option><option value="5000">5 s</option><option value="10000">10 s</option></select></div>
                 <div class="field"><label class="fl">Deadband %</label><input type="number" id="fpDeadband" min="0" max="100" step="0.1" value="0" style="width:80px"></div>
-                <div class="field"><label class="fl">MQTT</label><input type="checkbox" id="fpMqttEnabled"> <span class="msg">publish/subscribe this tag</span></div>
-                <div class="field"><label class="fl">MQTT Topic</label><input type="text" id="fpMqttTopic" placeholder="override topic (optional)"></div>
                 <div class="hint" style="margin-top:4px">Update Rate = DA group interval. With subscriptions on, the DA server pushes changes at this rate. With subscriptions off, the bridge polls at this rate.</div>
             </div>
             <div class="fp-tabpane" id="fp-pane-sim" style="display:none">
                 <div class="field"><label class="fl">Simulated</label><input type="checkbox" id="fpSimulated" data-action="tag-simulated"></div>
                 <div class="field"><label class="fl">Manual Value</label><input type="text" id="fpManualInput" data-action="tag-manual-value" disabled style="flex:1"></div>
                 <div class="hint" id="fpModeHint" style="margin-top:4px"></div>
+            </div>
+            <div class="fp-tabpane" id="fp-pane-mqtt" style="display:none">
+                <div class="field"><label class="fl">MQTT</label><input type="checkbox" id="fpMqttEnabled"> <span class="msg">publish/subscribe this tag</span></div>
+                <div class="field"><label class="fl">MQTT Topic</label><input type="text" id="fpMqttTopic" placeholder="override topic (optional)"></div>
+                <div class="hint" style="margin-top:4px">When enabled, the tag's value is published to the broker and inbound broker writes are applied to it. Leave the topic blank to use the default <span class="mono">{TopicPrefix}/{SourceId}/{DaItemId}</span> scheme.</div>
             </div>
         </div>
         <div class="modal-f">
