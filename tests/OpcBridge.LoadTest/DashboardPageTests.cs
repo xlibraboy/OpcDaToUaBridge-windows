@@ -29,4 +29,15 @@ public sealed class DashboardPageTests
         Assert.DoesNotContain("el('linkProviderSelect').innerHTML = opts;", DashboardPage.Script);
         Assert.DoesNotContain("const opts = '<option value=\"\">— select —</option>' + mappings.map", DashboardPage.Script);
     }
+
+    [Fact]
+    public void LinkDraft_CanBeClearedWithoutDeletingSavedRule()
+    {
+        Assert.Contains("id=\"btnClearLinkSelection\"", DashboardPage.Html);
+        Assert.Contains(">Clear Selection<", DashboardPage.Html);
+        Assert.Contains(">Delete Saved Link<", DashboardPage.Html);
+        Assert.Contains("function clearLinkDraftSelection()", DashboardPage.Script);
+        Assert.Contains("state.linkDraft.consumer = null", DashboardPage.Script);
+        Assert.Contains("state.linkDraft.provider = null", DashboardPage.Script);
+    }
 }

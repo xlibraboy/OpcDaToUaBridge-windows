@@ -487,7 +487,8 @@ internal static class DashboardPage
                 <button class="btn" id="btnBrowseAllLinkTags" type="button">Browse All Tags</button>
                 <button class="btn ghost" id="btnBrowseLinkTags" type="button">Browse Folders</button>
                 <button class="btn" type="button" id="btnSetLink">Save Link</button>
-                <button class="btn ghost" type="button" id="btnClearLink">Delete Link</button>
+                <button class="btn ghost" type="button" id="btnClearLink">Delete Saved Link</button>
+                <button class="btn ghost" type="button" id="btnClearLinkSelection">Clear Selection</button>
                 <span class="msg" id="linkBrowseStatus">Use the active source selection from Connection or Tags, then pick consumer/provider tags.</span>
             </div>
             <div class="breadcrumb" id="linkBrowseBreadcrumb"><span class="current">root</span></div>
@@ -691,6 +692,7 @@ function renderLinksView() {
     renderLinkDraftTarget('linkProviderTarget', provider, 'Browse the active source and choose a provider tag.');
     el('btnSetLink').disabled = !(consumer && provider);
     el('btnClearLink').disabled = !(consumer && findDaLinkByConsumer(consumer.key));
+    el('btnClearLinkSelection').disabled = !(consumer || provider);
     el('linksCount').textContent = links.length ? links.length + (links.length === 1 ? ' rule' : ' rules') : 'No rules';
     el('linksList').innerHTML = links.length ? links.map(link => {
         const consumerSourceId = link.consumerSourceId || link.ConsumerSourceId || 'default';
@@ -737,6 +739,12 @@ async function deleteDaLink(linkId) {
     if (!r.ok) throw new Error(p.error || ('HTTP ' + r.status));
     el('linksMessage').textContent = '✓ DA link removed.';
     await loadDaLinks();
+}
+function clearLinkDraftSelection() {
+    state.linkDraft.consumer = null;
+    state.linkDraft.provider = null;
+    el('linksMessage').textContent = 'Selection cleared.';
+    renderLinksView();
 }
 function renderMappingRow(mapping) {
     const sourceId = mapping.sourceId || mapping.SourceId || 'default';
@@ -1916,6 +1924,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const existing = findDaLinkByConsumer(consumerKey);
         deleteDaLink(existing ? (existing.id || existing.Id || '') : '').catch(e => el('linksMessage').textContent = '✗ ' + e.message);
     });
+    el('btnClearLinkSelection').addEventListener('click', () => clearLinkDraftSelection());
     el('linksList').addEventListener('click', event => {
         const btn = event.target.closest('button[data-action="unlink"]');
         if (!btn) return;
