@@ -25,6 +25,7 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
     private int backoffMs_ = 1000;
     private WriteQueue? write_queue_;
     private volatile Dictionary<string, SourceSession>? active_sessions_;
+    private volatile SourceMappingCache? source_mapping_cache_;
 
     public BridgeWorker(
         UaServerHost uaServer,
@@ -52,6 +53,7 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
         (IReadOnlyList<TagMapping> mappings, long mappingVersion) = mapping_store_.GetSnapshot();
         (IReadOnlyList<DaLinkRule> rules, long daLinkVersion) = da_link_store_.GetSnapshot();
         SourceMappingCache sourceMappingCache = SourceMappingCache.Build(mappings, rules);
+        source_mapping_cache_ = sourceMappingCache;
         IReadOnlyList<TagMapping> activeMappings = sourceMappingCache.GetActiveMappings();
         bridge_state_.Configure(settings.UpdateRateMs, activeMappings.Count, settings.Sources);
 
@@ -107,6 +109,7 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
                         if (mappingsChanged || rulesChanged)
                         {
                             cacheHolder.Cache = SourceMappingCache.Build(mappings, rules);
+                            source_mapping_cache_ = cacheHolder.Cache;
 
                             if (mappingsChanged)
                             {
@@ -550,11 +553,16 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
     private void OnSubscriptionValues(IReadOnlyList<BridgeValue> values)
     {
         bridge_state_.UpdateDaRead(values.Count > 0 ? values[0].SourceId : string.Empty, values, TimeSpan.Zero);
+        SourceMappingCache? cache = source_mapping_cache_;
         for (int i = 0; i < values.Count; i++)
         {
             BridgeValue value = values[i];
             bridge_state_.SetValue(value);
             ua_server_.UpdateValue(value);
+            if (cache is not null)
+            {
+                ForwardToConsumers(value, cache, CancellationToken.None);
+            }
         }
     }
     public object GetDiagnostics()

@@ -203,7 +203,7 @@ app.MapPost("/api/da/sources", (DaServerConfigRequest request, DaRuntimeSettings
         }
     });
 });
-app.MapPost("/api/da/sources/remove", (DaSourceRemoveRequest request, DaRuntimeSettings settings, MappingStore store) =>
+app.MapPost("/api/da/sources/remove", (DaSourceRemoveRequest request, DaRuntimeSettings settings, MappingStore store, DaLinkStore daLinkStore) =>
 {
     if (!settings.TryRemoveSource(request.SourceId, out DaRuntimeSettingsSnapshot snapshot))
     {
@@ -211,7 +211,8 @@ app.MapPost("/api/da/sources/remove", (DaSourceRemoveRequest request, DaRuntimeS
     }
 
     long mappingVersion = store.RemoveSource(request.SourceId);
-    return Results.Json(new { version = snapshot.Version, mappingVersion });
+    long daLinkVersion = daLinkStore.RemoveBySource(request.SourceId);
+    return Results.Json(new { version = snapshot.Version, mappingVersion, daLinkVersion });
 });
 app.MapPost("/api/da/servers", async (DaServerBrowseRequest request) =>
 {

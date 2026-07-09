@@ -115,6 +115,80 @@ public sealed class DaLinkApiTests
     }
 
     [Fact]
+    public async Task RemoveSource_RemovesDaLinkRulesReferencingThatSource()
+    {
+        Guid providerRuleId = Guid.NewGuid();
+        Guid consumerRuleId = Guid.NewGuid();
+        Guid retainedRuleId = Guid.NewGuid();
+
+        await using TestAppHandle app = await TestAppHandle.StartAsync(appDirectory =>
+        {
+            File.WriteAllText(Path.Combine(appDirectory, "mappings.json"), JsonSerializer.Serialize(new[]
+            {
+                new TagMapping
+                {
+                    SourceId = "providerA",
+                    DaItemId = "itemP",
+                    AccessRights = TagAccessRights.Read,
+                    Enabled = true
+                },
+                new TagMapping
+                {
+                    SourceId = "consumerA",
+                    DaItemId = "itemC",
+                    AccessRights = TagAccessRights.Write,
+                    Enabled = true
+                },
+                new TagMapping
+                {
+                    SourceId = "otherA",
+                    DaItemId = "itemO",
+                    AccessRights = TagAccessRights.ReadWrite,
+                    Enabled = true
+                }
+            }));
+
+            File.WriteAllText(
+                Path.Combine(appDirectory, "sources.json"),
+                JsonSerializer.Serialize(new DaRuntimeSettingsSnapshot(
+                    1000,
+                    true,
+                    new[]
+                    {
+                        new DaSourceRuntimeSettings("providerA", "Provider", string.Empty, "localhost", null, null, null, 1000),
+                        new DaSourceRuntimeSettings("consumerA", "Consumer", string.Empty, "localhost", null, null, null, 1000),
+                        new DaSourceRuntimeSettings("otherA", "Other", string.Empty, "localhost", null, null, null, 1000)
+                    },
+                    0)));
+
+            File.WriteAllText(Path.Combine(appDirectory, "links.json"), JsonSerializer.Serialize(new[]
+            {
+                new DaLinkRule(providerRuleId, "providerA", "itemP", "consumerA", "itemC", true, 5, 5),
+                new DaLinkRule(consumerRuleId, "otherA", "itemO", "providerA", "itemP", true, 5, 5),
+                new DaLinkRule(retainedRuleId, "otherA", "itemO", "consumerA", "itemC", true, 5, 5)
+            }));
+        });
+
+        using HttpResponseMessage response = await app.Client.PostAsync(
+            "/api/da/sources/remove",
+            CreateJsonContent(new DaSourceRemoveRequest("providerA")));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using JsonDocument linksBody = await app.GetJsonAsync("/api/da-links");
+        JsonElement.ArrayEnumerator links = linksBody.RootElement.GetProperty("links").EnumerateArray();
+        List<Guid> remainingIds = new();
+        foreach (JsonElement link in links)
+        {
+            remainingIds.Add(link.GetProperty("id").GetGuid());
+        }
+
+        Assert.DoesNotContain(providerRuleId, remainingIds);
+        Assert.DoesNotContain(consumerRuleId, remainingIds);
+        Assert.Contains(retainedRuleId, remainingIds);
+    }
+
+    [Fact]
     public void ValidateLink_RejectsTypeMismatch()
     {
         DaLinkDto request = new(

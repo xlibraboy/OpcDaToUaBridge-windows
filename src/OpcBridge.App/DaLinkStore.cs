@@ -149,6 +149,25 @@ public sealed class DaLinkStore
             return true;
         }
     }
+    public long RemoveBySource(string sourceId)
+    {
+        string normalizedSourceId = NormalizeSourceId(sourceId);
+
+        lock (sync_)
+        {
+            int removed = rules_.RemoveAll(existing =>
+                string.Equals(existing.ProviderSourceId, normalizedSourceId, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(existing.ConsumerSourceId, normalizedSourceId, StringComparison.OrdinalIgnoreCase));
+
+            if (removed > 0)
+            {
+                version_++;
+                Persist();
+            }
+
+            return version_;
+        }
+    }
 
     public int MigrateFromMappings(IEnumerable<TagMapping> mappings)
     {
