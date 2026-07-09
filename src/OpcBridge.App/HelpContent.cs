@@ -247,8 +247,40 @@ When a tag's Access Rights is **Read-Write** or **Write**:
                                  │
                           IOPCSyncIO.Write
                                  │
-                          DA Server
+                           DA Server
 ```
+
+---
+
+# MQTT (OPC UA ↔ Broker)
+
+The bridge can publish OPC UA tag values to an MQTT broker and accept writes from it. MQTT is scoped to the **OPC UA layer** — it reads the mirrored UA tag values and writes through the same UA write path a UA client uses.
+
+## Topics
+
+- Publish: `{TopicPrefix}/{SourceId}/{DaItemId}` (default prefix `bridge/tags`), or a per-tag `MqttTopic` override set in the tag faceplate.
+- Subscribe: the bridge subscribes to `{TopicPrefix}/#` and resolves inbound topics to tags the same way.
+
+## Payload
+
+Minimal JSON. Selectable fields (Broker tab → Payload Fields): `v` (value), `t` (timestamp), `q` (quality), `sourceId`, `itemId`, `displayName`, `dataType`. Default is `v` + `t`.
+
+```json
+{ "v": 12.3, "t": "2026-07-08T12:00:00.0000000Z" }
+```
+
+## Enable a tag
+
+Open a tag's faceplate (Tags tab) → check **MQTT** to publish and accept inbound writes for that tag. Set **MQTT Topic** to override the auto topic.
+
+## Broker connection
+
+MQTT tab → enter Broker URL (`tcp://host:port` or `mqtts://host:port`), optional credentials, TLS + Ignore Cert (dev), topic prefix, and payload fields. Save, then Connect. Connection state and a live traffic monitor are shown in the tab. Config persists to `mqtt.json`.
+
+## Notes
+
+- Publish and subscribe are failure-resilient: a broker outage does not stop the bridge; the client auto-reconnects.
+- Inbound writes to a tag flow through the UA write path (same as a UA client write) and are rejected if the tag is read-only.
 
 ## Subscriptions & Deadband
 
