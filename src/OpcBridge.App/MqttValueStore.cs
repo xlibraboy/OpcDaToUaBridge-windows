@@ -2,21 +2,23 @@ using System.Collections.Concurrent;
 
 namespace OpcBridge.App;
 
-/// <summary>Latest-value registry of published/received MQTT topics for the dashboard's Published Values view.</summary>
+/// <summary>Latest-value registry of published/received MQTT topics for the dashboard's Traffic Monitor. Keyed by topic + direction so a published (PUB) and a received (SUB) entry for the same topic are tracked separately.</summary>
 public sealed class MqttValueStore
 {
     private readonly ConcurrentDictionary<string, MqttValueEntry> values_ = new(StringComparer.OrdinalIgnoreCase);
 
+    private static string KeyOf(string direction, string topic) => topic + "\u0001" + direction;
+
     public void Set(string direction, string topic, string? value)
     {
         if (string.IsNullOrWhiteSpace(topic)) return;
-        values_[topic] = new MqttValueEntry(direction, topic, value, DateTime.UtcNow);
+        values_[KeyOf(direction, topic)] = new MqttValueEntry(direction, topic, value, DateTime.UtcNow);
     }
 
     public MqttValuePage GetEntries(string? direction, string? topic, int page, int pageSize)
     {
         page = page < 1 ? 1 : page;
-        pageSize = pageSize is < 1 or > 500 ? 50 : pageSize;
+        pageSize = pageSize < 1 ? 2000 : pageSize;
 
         IEnumerable<MqttValueEntry> query = values_.Values;
 
@@ -35,6 +37,7 @@ public sealed class MqttValueStore
         int total = query.Count();
         MqttValueEntry[] items = query
             .OrderBy(e => e.Topic, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(e => e.Direction, StringComparer.OrdinalIgnoreCase)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToArray();

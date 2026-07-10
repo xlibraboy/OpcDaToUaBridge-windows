@@ -640,18 +640,8 @@ internal static class DashboardPage
                 </select>
                 <label class="fl" for="mqttValTopic">Topic</label>
                 <input id="mqttValTopic" type="text" placeholder="contains…" oninput="onMqttValTopicInput()" style="flex:1;min-width:120px">
-                <label class="fl" for="mqttValPageSize">Per page</label>
-                <select id="mqttValPageSize" onchange="onMqttValFilterChange()">
-                    <option value="50" selected>50</option>
-                    <option value="100">100</option>
-                    <option value="200">200</option>
-                </select>
                 <label class="fl" for="mqttValAuto" style="width:auto">Auto</label>
                 <input type="checkbox" id="mqttValAuto" checked onchange="onMqttValFilterChange()">
-            </div>
-            <div class="field" style="margin-bottom:10px">
-                <button class="btn ghost" id="mqttValPrev" onclick="mqttValPrev()">‹ Prev</button>
-                <button class="btn ghost" id="mqttValNext" onclick="mqttValNext()">Next ›</button>
             </div>
             <div class="list" id="mqttTraffic"><span class="msg">No MQTT tags yet.</span></div>
         </div>
@@ -702,7 +692,7 @@ const state = {
     mappingSort: 'name',
     mappingSortDir: 1,
     mappingFilter: '',
-    mqttValFilter: { direction: '', topic: '', page: 1, pageSize: 50 },
+    mqttValFilter: { direction: '', topic: '' },
     valuesByKey: new Map(),
     handleHistory: [],
     handleBaseline: null
@@ -1471,27 +1461,18 @@ async function loadMqttValues() {
     try {
         state.mqttValFilter = {
             direction: (el('mqttValDir')?.value || '').trim(),
-            topic: (el('mqttValTopic')?.value || '').trim(),
-            page: state.mqttValFilter.page || 1,
-            pageSize: parseInt(el('mqttValPageSize')?.value || '50', 10) || 50
+            topic: (el('mqttValTopic')?.value || '').trim()
         };
         const q = new URLSearchParams();
         if (state.mqttValFilter.direction) q.set('direction', state.mqttValFilter.direction);
         if (state.mqttValFilter.topic) q.set('topic', state.mqttValFilter.topic);
-        q.set('page', String(state.mqttValFilter.page));
-        q.set('pageSize', String(state.mqttValFilter.pageSize));
+        q.set('pageSize', '100000');
         const p = await (await fetch('/api/mqtt/values?' + q.toString(), { cache: 'no-store' })).json();
         const items = p.items || [];
-        const total = p.total || 0;
-        renderMqttValues(items, total);
+        renderMqttValues(items);
     } catch (e) { el('mqttTraffic').innerHTML = '<span class="msg">✗ ' + esc(e.message) + '</span>'; }
 }
-function renderMqttValues(items, total) {
-    const pageSize = state.mqttValFilter.pageSize;
-    const page = state.mqttValFilter.page;
-    const end = Math.min(page * pageSize, total);
-    el('mqttValPrev').disabled = page <= 1;
-    el('mqttValNext').disabled = end >= total;
+function renderMqttValues(items) {
     if (!items.length) { el('mqttTraffic').innerHTML = '<span class="msg">No MQTT tags yet.</span>'; return; }
     el('mqttTraffic').innerHTML = items.map(e =>
         `<div class="li"><span class="badge ${e.direction === 'PUB' ? 'good' : 'partial'}">${esc(e.direction)}</span>` +
@@ -1499,14 +1480,12 @@ function renderMqttValues(items, total) {
         `<span class="p">${esc(e.value || '')}</span>` +
         `<span class="s">${esc(new Date(e.timestampUtc).toLocaleTimeString())}</span></div>`).join('');
 }
-function onMqttValFilterChange() { state.mqttValFilter.page = 1; loadMqttValues().catch(() => {}); }
+function onMqttValFilterChange() { loadMqttValues().catch(() => {}); }
 let mqttValTopicTimer;
 function onMqttValTopicInput() {
     clearTimeout(mqttValTopicTimer);
-    mqttValTopicTimer = setTimeout(() => { state.mqttValFilter.page = 1; loadMqttValues().catch(() => {}); }, 250);
+    mqttValTopicTimer = setTimeout(() => loadMqttValues().catch(() => {}), 250);
 }
-function mqttValPrev() { if (state.mqttValFilter.page > 1) { state.mqttValFilter.page--; loadMqttValues().catch(() => {}); } }
-function mqttValNext() { state.mqttValFilter.page++; loadMqttValues().catch(() => {}); }
 function applyMappingView(mappings) {
     const filter = (state.mappingFilter || '').trim().toLowerCase();
     let view = mappings;
