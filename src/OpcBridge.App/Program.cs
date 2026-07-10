@@ -34,6 +34,7 @@ builder.Services.AddSingleton<UaServerHost>();
 builder.Services.AddSingleton<IMqttBridge, MqttBridge>();
 builder.Services.AddSingleton<MqttRuntimeSettings>();
 builder.Services.AddSingleton<MqttTrafficStore>();
+builder.Services.AddSingleton<MqttValueStore>();
 builder.Services.AddSingleton<BridgeWorker>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<BridgeWorker>());
 builder.Services.AddHostedService<OpcBridgeMonitor>();
@@ -761,6 +762,21 @@ app.MapGet("/api/mqtt/logs", (MqttTrafficStore traffic, int? limit, string? dire
             detail = e.Detail,
             timestampUtc = e.TimestampUtc
         })
+    });
+});
+app.MapGet("/api/mqtt/values", (MqttValueStore values, string? direction, string? topic, int? page, int? pageSize) =>
+{
+    MqttValuePage page_ = values.GetEntries(direction, topic, page ?? 1, pageSize ?? 50);
+    return Results.Json(new
+    {
+        items = page_.Items.Select(e => new
+        {
+            direction = e.Direction,
+            topic = e.Topic,
+            value = e.Value,
+            timestampUtc = e.TimestampUtc
+        }),
+        total = page_.Total
     });
 });
 

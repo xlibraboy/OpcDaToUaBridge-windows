@@ -30,6 +30,7 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
     private readonly IMqttBridge mqtt_bridge_;
     private readonly MqttRuntimeSettings mqtt_settings_;
     private readonly MqttTrafficStore mqtt_traffic_;
+    private readonly MqttValueStore mqtt_values_;
     private readonly Channel<BridgeValue> mqtt_publish_channel_ = Channel.CreateBounded<BridgeValue>(
         new BoundedChannelOptions(1024)
         {
@@ -51,7 +52,8 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
         ILogger<BridgeWorker> logger,
         IMqttBridge mqttBridge,
         MqttRuntimeSettings mqttSettings,
-        MqttTrafficStore mqttTraffic)
+        MqttTrafficStore mqttTraffic,
+        MqttValueStore mqttValues)
     {
         ua_server_ = uaServer;
         bridge_state_ = bridgeState;
@@ -64,6 +66,7 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
         mqtt_bridge_ = mqttBridge;
         mqtt_settings_ = mqttSettings;
         mqtt_traffic_ = mqttTraffic;
+        mqtt_values_ = mqttValues;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -648,6 +651,7 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
                 await mqtt_bridge_.PublishAsync(topic, payload, ct).ConfigureAwait(false);
                 mqtt_settings_.IncrementPublished();
                 mqtt_traffic_.Add("PUB", topic, payload);
+                mqtt_values_.Set("PUB", topic, payload);
             }
             catch (Exception ex)
             {
@@ -660,6 +664,7 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
     {
         mqtt_settings_.IncrementReceived();
         mqtt_traffic_.Add("SUB", message.Topic, message.RawValue);
+        mqtt_values_.Set("SUB", message.Topic, message.RawValue);
 
         (string? sourceId, string? daItemId) = ResolveTopicToMapping(message.Topic);
         if (sourceId is null || daItemId is null)
