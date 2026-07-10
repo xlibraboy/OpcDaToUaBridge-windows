@@ -110,6 +110,10 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
             mqtt_bridge_.StateChanged += state =>
             {
                 mqtt_settings_.SetState(state.ToString(), state == MqttConnectionState.Faulted ? "MQTT broker connection failed." : null);
+                if (state == MqttConnectionState.Connected)
+                {
+                    mqtt_settings_.ResetCounters();
+                }
             };
             bridge_state_.ValueUpdated += OnBridgeValueUpdated;
             _ = Task.Run(() => MqttPublishDrainAsync(stoppingToken), stoppingToken);

@@ -15,6 +15,11 @@ public sealed class MqttRuntimeSettings
     private string? last_error_;
     private long published_count_;
     private long received_count_;
+    private DateTime rate_window_start_ = DateTime.UtcNow;
+    private long rate_window_published_;
+    private long rate_window_received_;
+    private double published_rate_;
+    private double received_rate_;
 
     public MqttRuntimeSettings(IOptions<MqttBrokerOptions> options)
     {
@@ -32,7 +37,31 @@ public sealed class MqttRuntimeSettings
     {
         lock (sync_)
         {
-            return new MqttRuntimeSnapshot(state_, last_error_, published_count_, received_count_, options_);
+            DateTime now = DateTime.UtcNow;
+            double elapsed = (now - rate_window_start_).TotalSeconds;
+            if (elapsed >= 1.0)
+            {
+                published_rate_ = rate_window_published_ / elapsed;
+                received_rate_ = rate_window_received_ / elapsed;
+                rate_window_published_ = 0;
+                rate_window_received_ = 0;
+                rate_window_start_ = now;
+            }
+            return new MqttRuntimeSnapshot(state_, last_error_, published_count_, received_count_, published_rate_, received_rate_, options_);
+        }
+    }
+
+    public void ResetCounters()
+    {
+        lock (sync_)
+        {
+            published_count_ = 0;
+            received_count_ = 0;
+            rate_window_published_ = 0;
+            rate_window_received_ = 0;
+            rate_window_start_ = DateTime.UtcNow;
+            published_rate_ = 0;
+            received_rate_ = 0;
         }
     }
 
@@ -54,8 +83,8 @@ public sealed class MqttRuntimeSettings
         }
     }
 
-    public void IncrementPublished() { lock (sync_) { published_count_++; } }
-    public void IncrementReceived() { lock (sync_) { received_count_++; } }
+    public void IncrementPublished() { lock (sync_) { published_count_++; rate_window_published_++; } }
+    public void IncrementReceived() { lock (sync_) { received_count_++; rate_window_received_++; } }
 
     private void Persist()
     {
@@ -91,4 +120,6 @@ public sealed record MqttRuntimeSnapshot(
     string? LastError,
     long PublishedCount,
     long ReceivedCount,
+    double PublishedRate,
+    double ReceivedRate,
     MqttBrokerOptions Options);

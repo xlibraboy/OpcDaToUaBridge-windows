@@ -746,6 +746,8 @@ app.MapGet("/api/mqtt/status", (MqttRuntimeSettings settings) =>
         lastError = snapshot.LastError,
         publishedCount = snapshot.PublishedCount,
         receivedCount = snapshot.ReceivedCount,
+        publishedRate = snapshot.PublishedRate,
+        receivedRate = snapshot.ReceivedRate,
         enabled = snapshot.Options.Enabled
     });
 });

@@ -620,11 +620,11 @@ internal static class DashboardPage
             </div>
         </div>
         <div class="box">
-            <div class="box-h">Connection <span class="info" data-tip="Live broker connection status and counters since the bridge started.">i</span></div>
+            <div class="box-h">Connection <span class="info" data-tip="Live broker connection status and counters since the last (re)connect.">i</span></div>
             <div class="box-b">
                 <div class="stat"><div class="k">State <span class="info" data-tip="Broker connection state: Disconnected, Connecting, Connected, or Faulted (connection failed or dropped).">i</span></div><div class="v" id="mqttState">Disconnected</div><div class="s" id="mqttLastError">No errors</div></div>
-                <div class="stat"><div class="k">Published <span class="info" data-tip="Total values published to the broker since start — one per enabled tag update.">i</span></div><div class="v" id="mqttPublished">0</div></div>
-                <div class="stat"><div class="k">Received <span class="info" data-tip="Total inbound messages from the broker. Includes the bridge's own publishes echoed back if it subscribes to its own prefix.">i</span></div><div class="v" id="mqttReceived">0</div></div>
+                <div class="stat"><div class="k">Published <span class="info" data-tip="Total values published to the broker since the last (re)connect — one per enabled tag update.">i</span></div><div class="v" id="mqttPublished">0</div><div class="s" id="mqttPublishedRate">0.0/s</div></div>
+                <div class="stat"><div class="k">Received <span class="info" data-tip="Total inbound messages from the broker since the last (re)connect. Includes the bridge's own publishes echoed back if it subscribes to its own prefix.">i</span></div><div class="v" id="mqttReceived">0</div><div class="s" id="mqttReceivedRate">0.0/s</div></div>
             </div>
         </div>
     </div>
@@ -1424,8 +1424,10 @@ async function loadMqtt() {
         el('mqttState').textContent = st.state || 'Disconnected';
         el('mqttState').className = 'v ' + (st.state === 'Connected' ? 'badge good' : 'badge bad');
         el('mqttLastError').textContent = st.lastError || 'No errors';
-        el('mqttPublished').textContent = String(st.publishedCount || 0);
-        el('mqttReceived').textContent = String(st.receivedCount || 0);
+        el('mqttPublished').textContent = (st.publishedCount || 0).toLocaleString();
+        el('mqttReceived').textContent = (st.receivedCount || 0).toLocaleString();
+        el('mqttPublishedRate').textContent = (st.publishedRate || 0).toFixed(1) + '/s';
+        el('mqttReceivedRate').textContent = (st.receivedRate || 0).toFixed(1) + '/s';
     } catch (e) { el('mqttMessage').textContent = '✗ ' + e.message; }
 }
 async function saveMqtt() {
