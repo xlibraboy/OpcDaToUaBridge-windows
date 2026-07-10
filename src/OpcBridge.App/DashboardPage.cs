@@ -630,7 +630,28 @@ internal static class DashboardPage
     </div>
     <div class="box" style="margin-top:14px">
         <div class="box-h">Traffic Monitor <span class="info" data-tip="Recent publish (PUB) and subscribe (SUB) messages. PUB = value sent to broker; SUB = inbound message applied via the UA write path.">i</span> <span class="msg" style="margin-left:auto"><button class="btn ghost" onclick="loadMqttLogs()">Refresh</button></span></div>
-        <div class="box-b"><div class="list" id="mqttTraffic"><span class="msg">No MQTT traffic yet.</span></div></div>
+        <div class="box-b">
+            <div class="field" style="margin-bottom:10px">
+                <label class="fl" for="mqttFilterDir">Type</label>
+                <select id="mqttFilterDir" onchange="onMqttFilterChange()">
+                    <option value="">All</option>
+                    <option value="PUB">PUB</option>
+                    <option value="SUB">SUB</option>
+                </select>
+                <label class="fl" for="mqttFilterTopic">Topic</label>
+                <input id="mqttFilterTopic" type="text" placeholder="contains…" oninput="onMqttFilterTopicInput()" style="flex:1;min-width:120px">
+                <label class="fl" for="mqttFilterLimit">Show</label>
+                <select id="mqttFilterLimit" onchange="onMqttFilterChange()">
+                    <option value="50">50</option>
+                    <option value="200" selected>200</option>
+                    <option value="500">500</option>
+                </select>
+                <label class="fl" for="mqttAutoRefresh" style="width:auto">Auto</label>
+                <input type="checkbox" id="mqttAutoRefresh" checked onchange="onMqttFilterChange()">
+                <span class="msg" id="mqttTrafficCount" style="margin-left:auto"></span>
+            </div>
+            <div class="list" id="mqttTraffic"><span class="msg">No MQTT traffic yet.</span></div>
+        </div>
     </div>
 </div>
 </div>
@@ -678,6 +699,7 @@ const state = {
     mappingSort: 'name',
     mappingSortDir: 1,
     mappingFilter: '',
+    mqttFilter: { direction: '', topic: '', limit: 200 },
     valuesByKey: new Map(),
     handleHistory: [],
     handleBaseline: null
@@ -1444,14 +1466,34 @@ async function disconnectMqtt() {
 }
 async function loadMqttLogs() {
     try {
-        const p = await (await fetch('/api/mqtt/logs?limit=200', { cache: 'no-store' })).json();
-        el('mqttTraffic').innerHTML = (p.entries || []).map(e =>
-            `<div class="li"><span class="badge ${e.direction === 'PUB' ? 'good' : 'partial'}">${esc(e.direction)}</span>` +
-            `<span class="mono">${esc(e.topic)}</span>` +
-            `<span class="p">${esc(e.detail || '')}</span>` +
-            `<span class="s">${esc(new Date(e.timestampUtc).toLocaleTimeString())}</span></div>`).join('') ||
-            '<span class="msg">No MQTT traffic yet.</span>';
+        state.mqttFilter = {
+            direction: (el('mqttFilterDir')?.value || '').trim(),
+            topic: (el('mqttFilterTopic')?.value || '').trim(),
+            limit: parseInt(el('mqttFilterLimit')?.value || '200', 10) || 200
+        };
+        const q = new URLSearchParams();
+        q.set('limit', String(state.mqttFilter.limit));
+        if (state.mqttFilter.direction) q.set('direction', state.mqttFilter.direction);
+        if (state.mqttFilter.topic) q.set('topic', state.mqttFilter.topic);
+        const p = await (await fetch('/api/mqtt/logs?' + q.toString(), { cache: 'no-store' })).json();
+        const entries = p.entries || [];
+        renderMqttLogs(entries);
+        el('mqttTrafficCount').textContent = entries.length + (entries.length === state.mqttFilter.limit ? '+ entries' : ' entries');
     } catch (e) { el('mqttTraffic').innerHTML = '<span class="msg">✗ ' + esc(e.message) + '</span>'; }
+}
+function renderMqttLogs(entries) {
+    if (!entries.length) { el('mqttTraffic').innerHTML = '<span class="msg">No MQTT traffic yet.</span>'; return; }
+    el('mqttTraffic').innerHTML = entries.map(e =>
+        `<div class="li"><span class="badge ${e.direction === 'PUB' ? 'good' : 'partial'}">${esc(e.direction)}</span>` +
+        `<span class="mono">${esc(e.topic)}</span>` +
+        `<span class="p">${esc(e.detail || '')}</span>` +
+        `<span class="s">${esc(new Date(e.timestampUtc).toLocaleTimeString())}</span></div>`).join('');
+}
+function onMqttFilterChange() { loadMqttLogs().catch(() => {}); }
+let mqttFilterTopicTimer;
+function onMqttFilterTopicInput() {
+    clearTimeout(mqttFilterTopicTimer);
+    mqttFilterTopicTimer = setTimeout(() => loadMqttLogs().catch(() => {}), 250);
 }
 function applyMappingView(mappings) {
     const filter = (state.mappingFilter || '').trim().toLowerCase();
@@ -2057,6 +2099,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setInterval(refresh, 1000);
     setInterval(() => { if (el('logAutoRefresh')?.checked && document.querySelector('#view-logs.active')) { state.logsLoaded = false; loadLogs(true).catch(() => {}); } }, 3000);
     setInterval(() => { if (diagnosticsActive) loadDiagnostics().catch(() => {}); }, 2000);
+    setInterval(() => { if (el('mqttAutoRefresh')?.checked && document.querySelector('#view-mqtt.active')) loadMqttLogs().catch(() => {}); }, 2000);
     if (initTab === 'logs') await loadLogs();
     if (initTab === 'help') await loadHelp();
     if (initTab === 'about') await loadAppInfo();

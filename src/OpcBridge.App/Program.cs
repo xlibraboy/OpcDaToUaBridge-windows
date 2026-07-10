@@ -749,9 +749,9 @@ app.MapGet("/api/mqtt/status", (MqttRuntimeSettings settings) =>
         enabled = snapshot.Options.Enabled
     });
 });
-app.MapGet("/api/mqtt/logs", (MqttTrafficStore traffic, int? limit) =>
+app.MapGet("/api/mqtt/logs", (MqttTrafficStore traffic, int? limit, string? direction, string? topic) =>
 {
-    IReadOnlyList<MqttTrafficEntry> entries = traffic.GetEntries(limit ?? 200);
+    IReadOnlyList<MqttTrafficEntry> entries = traffic.GetEntries(limit ?? 200, direction, topic);
     return Results.Json(new
     {
         entries = entries.Select(e => new

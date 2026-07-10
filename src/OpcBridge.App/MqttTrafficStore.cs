@@ -17,9 +17,23 @@ public sealed class MqttTrafficStore
         }
     }
 
-    public IReadOnlyList<MqttTrafficEntry> GetEntries(int limit)
+    public IReadOnlyList<MqttTrafficEntry> GetEntries(int limit, string? direction = null, string? topic = null)
     {
-        return entries_
+        IEnumerable<MqttTrafficEntry> query = entries_;
+
+        if (!string.IsNullOrWhiteSpace(direction))
+        {
+            var dir = direction.Trim();
+            query = query.Where(e => string.Equals(e.Direction, dir, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (!string.IsNullOrWhiteSpace(topic))
+        {
+            var t = topic.Trim();
+            query = query.Where(e => (e.Topic ?? string.Empty).Contains(t, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return query
             .OrderByDescending(e => e.TimestampUtc)
             .Take(limit <= 0 ? Capacity : limit)
             .ToArray();
