@@ -33,7 +33,6 @@ builder.Services.AddSingleton<IDaLinkMetadataResolver>(sp => sp.GetRequiredServi
 builder.Services.AddSingleton<UaServerHost>();
 builder.Services.AddSingleton<IMqttBridge, MqttBridge>();
 builder.Services.AddSingleton<MqttRuntimeSettings>();
-builder.Services.AddSingleton<MqttTrafficStore>();
 builder.Services.AddSingleton<MqttValueStore>();
 builder.Services.AddSingleton<BridgeWorker>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<BridgeWorker>());
@@ -748,20 +747,6 @@ app.MapGet("/api/mqtt/status", (MqttRuntimeSettings settings) =>
         publishedCount = snapshot.PublishedCount,
         receivedCount = snapshot.ReceivedCount,
         enabled = snapshot.Options.Enabled
-    });
-});
-app.MapGet("/api/mqtt/logs", (MqttTrafficStore traffic, int? limit, string? direction, string? topic) =>
-{
-    IReadOnlyList<MqttTrafficEntry> entries = traffic.GetEntries(limit ?? 200, direction, topic);
-    return Results.Json(new
-    {
-        entries = entries.Select(e => new
-        {
-            direction = e.Direction,
-            topic = e.Topic,
-            detail = e.Detail,
-            timestampUtc = e.TimestampUtc
-        })
     });
 });
 app.MapGet("/api/mqtt/values", (MqttValueStore values, string? direction, string? topic, int? page, int? pageSize) =>

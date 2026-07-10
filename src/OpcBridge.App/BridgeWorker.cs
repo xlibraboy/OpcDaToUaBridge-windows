@@ -29,7 +29,6 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
     private volatile Dictionary<string, SourceSession>? active_sessions_;
     private readonly IMqttBridge mqtt_bridge_;
     private readonly MqttRuntimeSettings mqtt_settings_;
-    private readonly MqttTrafficStore mqtt_traffic_;
     private readonly MqttValueStore mqtt_values_;
     private readonly Channel<BridgeValue> mqtt_publish_channel_ = Channel.CreateBounded<BridgeValue>(
         new BoundedChannelOptions(1024)
@@ -52,7 +51,6 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
         ILogger<BridgeWorker> logger,
         IMqttBridge mqttBridge,
         MqttRuntimeSettings mqttSettings,
-        MqttTrafficStore mqttTraffic,
         MqttValueStore mqttValues)
     {
         ua_server_ = uaServer;
@@ -65,7 +63,6 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
         rate_limits_ = bridgeOptions.Value.RateLimits;
         mqtt_bridge_ = mqttBridge;
         mqtt_settings_ = mqttSettings;
-        mqtt_traffic_ = mqttTraffic;
         mqtt_values_ = mqttValues;
     }
 
@@ -650,7 +647,6 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
                 string payload = MqttPayload.Serialize(value, options.PayloadFields, ResolveDisplayName(value.SourceId, value.DaItemId));
                 await mqtt_bridge_.PublishAsync(topic, payload, ct).ConfigureAwait(false);
                 mqtt_settings_.IncrementPublished();
-                mqtt_traffic_.Add("PUB", topic, payload);
                 mqtt_values_.Set("PUB", topic, payload);
             }
             catch (Exception ex)
@@ -663,7 +659,6 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
     private async Task OnMqttInboundAsync(MqttInboundMessage message)
     {
         mqtt_settings_.IncrementReceived();
-        mqtt_traffic_.Add("SUB", message.Topic, message.RawValue);
         mqtt_values_.Set("SUB", message.Topic, message.RawValue);
 
         (string? sourceId, string? daItemId) = ResolveTopicToMapping(message.Topic);
