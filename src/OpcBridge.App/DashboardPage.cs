@@ -629,7 +629,7 @@ internal static class DashboardPage
         </div>
     </div>
     <div class="box" style="margin-top:14px">
-        <div class="box-h">Traffic Monitor <span class="info" data-tip="All published (PUB) and received (SUB) MQTT tags and their latest value. Filter by type or topic to browse the full set of tags the bridge is handling — not a rolling activity log.">i</span> <span class="msg" style="margin-left:auto"><button class="btn ghost" onclick="loadMqttValues()">Refresh</button></span></div>
+         <div class="box-h">Traffic Monitor <span class="info" data-tip="Recent publish (PUB) and subscribe (SUB) messages. PUB = value sent to broker; SUB = inbound message applied via the UA write path.">i</span> <span class="msg" style="margin-left:auto"><button class="btn ghost" onclick="loadMqttValues()">Refresh</button></span></div>
         <div class="box-b">
             <div class="field" style="margin-bottom:10px">
                 <label class="fl" for="mqttValDir">Type</label>
