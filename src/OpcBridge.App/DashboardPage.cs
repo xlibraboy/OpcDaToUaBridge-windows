@@ -236,7 +236,7 @@ internal static class DashboardPage
     <button class="tabbtn" data-tab="connection" onclick="showTab('connection')">Connection</button>
     <button class="tabbtn" data-tab="diagnostics" onclick="showTab('diagnostics')">Diagnostics</button>
     <button class="tabbtn" data-tab="tags" onclick="showTab('tags')">Tags</button>
-    <button class="tabbtn" data-tab="links" onclick="showTab('links')">Links</button>
+    <button class="tabbtn" data-tab="links" onclick="showTab('links')">OPC DA to DA</button>
     <button class="tabbtn" data-tab="logs" onclick="showTab('logs')">Logs</button>
     <button class="tabbtn" data-tab="mqtt" onclick="showTab('mqtt')">MQTT</button>
     <button class="tabbtn" data-tab="help" onclick="showTab('help')">Help</button>

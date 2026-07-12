@@ -7,7 +7,7 @@ internal static class HelpContent
 
 - Use **Connection** to configure server connections (OPC DA address, credentials, default update rate, and DA subscriptions toggle).
 - Use **Tags** to browse DA items, create DA → OPC UA mappings, and set per-tag Access Rights, Update Rate, Deadband, Description, and Simulation.
-- Use **Links** to connect tags — a consumer tag receives values from a provider tag in addition to its own DA source.
+- Use **OPC DA to DA** to connect tags — a consumer tag receives values from a provider tag in addition to its own DA source.
 - Use **Logs** to review warnings and errors from the bridge and UA server.
 ---
 
@@ -74,7 +74,7 @@ internal static class HelpContent
   │  Monitor ──► stats, source status, alarm bar, live values table      │
 │  Connection ──► server connection config, discovery, default rate, subscriptions toggle  │
 │  Tags ──► DA browser, mappings, faceplate (access rights, update rate, simulation)  │
-│  Links ──► connected tags: set/clear provider→consumer links, view all connections   │
+│  OPC DA to DA ──► connected tags: set/clear provider→consumer links, view all connections   │
   │  Help ──► this page                                                  │
   │                                                                      │
    │  HTTP API: /api/dashboard, /api/mappings, /api/da/sources, etc.      │
@@ -250,7 +250,7 @@ DA Links are a **separate subsystem** from DA → UA mappings. A provider change
 
 ## Setting up links
 
-1. Open the **Links** tab.
+1. Open the **OPC DA to DA** tab.
 2. Pick a **Consumer** tag.
 3. Pick a **Provider** tag.
 4. Click **Save Link**.
