@@ -311,35 +311,57 @@ When a tag's Access Rights is **Read-Write** or **Write**:
 
 ---
 
-# MQTT (OPC UA ↔ Broker)
+# MQTT (OPC UA ↔ External Broker)
 
-The bridge can publish OPC UA tag values to an MQTT broker and accept writes from it. MQTT is scoped to the **OPC UA layer** — it reads the mirrored UA tag values and writes through the same UA write path a UA client uses.
+## Important: You Need an External MQTT Broker
+
+**This app does NOT include its own MQTT broker.** It connects TO an external MQTT broker (like Mosquitto, HiveMQ, EMQX, AWS IoT, etc.). You must have a broker running before you can use MQTT features.
+
+**Quick start with Mosquitto (Docker):**
+```bash
+docker run -d -p 1883:1883 --name mosquitto eclipse-mosquitto
+```
+
+Then configure the bridge to connect to `tcp://localhost:1883`.
+
+## What MQTT Does
+
+The bridge can:
+- **Publish** OPC UA tag values to your MQTT broker (when tags have MQTT enabled)
+- **Subscribe** to topics and write inbound messages back through the OPC UA path
+
+MQTT is scoped to the **OPC UA layer** — it reads the mirrored UA tag values and writes through the same UA write path a UA client uses.
+
+## Setup Steps
+
+1. **Start an MQTT broker** (see examples above)
+2. **Configure the broker connection** in the MQTT Broker section:
+   - Turn ON the **Enabled** checkbox
+   - Enter your broker URL (e.g., `tcp://localhost:1883`)
+   - Add credentials if your broker requires them
+   - Click **Save Config** then **Connect**
+3. **Enable MQTT for specific tags**:
+   - Go to Tags tab → click a tag → check the **MQTT** checkbox
+   - Optionally set a custom topic in the **MQTT Topic** field
 
 ## Topics
 
-- Publish: `{TopicPrefix}/{SourceId}/{DaItemId}` (default prefix `bridge/tags`), or a per-tag `MqttTopic` override set in the tag faceplate.
-- Subscribe: the bridge subscribes to `{TopicPrefix}/#` and resolves inbound topics to tags the same way.
+- **Publish**: `{TopicPrefix}/{SourceId}/{DaItemId}` (default prefix `bridge/tags`), or a per-tag `MqttTopic` override set in the tag faceplate.
+- **Subscribe**: the bridge subscribes to `{TopicPrefix}/#` and resolves inbound topics to tags the same way.
 
 ## Payload
 
-Minimal JSON. Selectable fields (Broker tab → Payload Fields): `v` (value), `t` (timestamp), `q` (quality), `sourceId`, `itemId`, `displayName`, `dataType`. Default is `v` + `t`.
+Minimal JSON. Selectable fields (MQTT Broker → Payload Fields): `v` (value), `t` (timestamp), `q` (quality), `sourceId`, `itemId`, `displayName`, `dataType`. Default is `v` + `t`.
 
 ```json
 { "v": 12.3, "t": "2026-07-08T12:00:00.0000000Z" }
 ```
 
-## Enable a tag
-
-Open a tag's faceplate (Tags tab) → check **MQTT** to publish and accept inbound writes for that tag. Set **MQTT Topic** to override the auto topic.
-
-## Broker connection
-
-MQTT tab → enter Broker URL (`tcp://host:port` or `mqtts://host:port`), optional credentials, TLS + Ignore Cert (dev), topic prefix, and payload fields. Save, then Connect. Connection state and a live traffic monitor are shown in the tab. Config persists to `mqtt.json`.
-
 ## Notes
 
-- Publish and subscribe are failure-resilient: a broker outage does not stop the bridge; the client auto-reconnects.
-- Inbound writes to a tag flow through the UA write path (same as a UA client write) and are rejected if the tag is read-only.
+- **Connection resilience**: Publish and subscribe are failure-resilient — a broker outage does not stop the bridge; the client auto-reconnects.
+- **Write protection**: Inbound writes to a tag flow through the UA write path (same as a UA client write) and are rejected if the tag is read-only.
+- **Popular MQTT brokers**: Mosquitto (free, open source), HiveMQ (enterprise), EMQX (scalable), AWS IoT Core, Azure IoT Hub, Google Cloud IoT Core.
 
 ## Subscriptions & Deadband
 

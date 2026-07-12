@@ -1,0 +1,511 @@
+Commits
+=======
+fc89824 refactor: remove stale mapping-linked provider workflow
+
+Stat
+====
+ src/OpcBridge.App/DashboardPage.cs             |   9 +-
+ src/OpcBridge.App/HelpContent.cs              |  60 ++++++--------------
+ src/OpcBridge.App/MappingRequests.cs          |   4 +-
+ src/OpcBridge.App/Program.cs                  |   8 +-
+ tests/OpcBridge.LoadTest/ConnectedTagsTests.cs| 135 ++++++++++----------------------------
+ tests/OpcBridge.LoadTest/HelpContentTests.cs  |  15 ++++
+ 6 files changed, 86 insertions(+), 145 deletions(-)
+
+Diff
+====
+diff --git a/src/OpcBridge.App/DashboardPage.cs b/src/OpcBridge.App/DashboardPage.cs
+index 479ae1d..7db4628 100644
+--- a/src/OpcBridge.App/DashboardPage.cs
++++ b/src/OpcBridge.App/DashboardPage.cs
+@@ -748,26 +748,23 @@ function renderMappingRow(mapping) {
+     const writeable = (mapping.writeable ?? mapping.Writeable) === true;
+     const pollRate = mapping.pollRateMs ?? mapping.PollRateMs ?? 0;
+     const deadband = Number(mapping.deadbandPct ?? mapping.DeadbandPct ?? 0);
+     const access = deriveAccess(mapping);
+     const simulated = (mode === 'Manual');
+     let accessBadge;
+     if (!enabled) { accessBadge = badge('Disabled', 'bad'); }
+     else { accessBadge = badge(access + (simulated && access !== 'Write' ? ' / Sim' : ''), access === 'Read' ? 'good' : access === 'Read-Write' ? 'partial' : 'warn'); }
+     const rateBadge = pollRate > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">${pollRate}ms</span>` : '';
+     const deadbandBadge = deadband > 0 ? `<span class="pill" style="padding:1px 6px;font-size:10px">db ${deadband}%</span>` : '';
+-    const provSrc = mapping.providerSourceId || mapping.ProviderSourceId || '';
+-    const provItem = mapping.providerDaItemId || mapping.ProviderDaItemId || '';
+-    const fedBadge = provSrc ? `<span class="pill" style="padding:1px 6px;font-size:10px;background:#e8f0fe;color:#1a73e8" title="Fed by ${esc(provSrc)} · ${esc(provItem)}">⇠ fed</span>` : '';
+     const desc = (mapping.description || mapping.Description || '').trim();
+     const descIcon = desc ? `<span class="li-desc" title="${attr(desc)}" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">&#8505;</span>` : '';
+-    return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">${descIcon}<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="n">${esc(name)}</span> <span class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</span></div><div class="li-badge">${accessBadge}${fedBadge}${deadbandBadge}${rateBadge}</div></div>`;
++    return `<div class="li clickable" data-action="open-faceplate" data-source-id="${attr(sourceId)}" data-item-id="${attr(item)}">${descIcon}<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="n">${esc(name)}</span> <span class="p">${esc(sourceId)} · ${esc(item)} · UA: ${esc(node)}</span></div><div class="li-badge">${accessBadge}${deadbandBadge}${rateBadge}</div></div>`;
+ }
+ 
+ function renderMappingRows(mappings) {
+     return mappings.length ? mappings.map(renderMappingRow).join('') : '<span class="msg">No DA → OPC UA mappings.</span>';
+ }
+ 
+ let faceplateOpen = false;
+ let faceplateKey = null;
+ 
+ function openFaceplate(sourceId, itemId) {
+@@ -1397,23 +1394,21 @@ async function updateMapping(sourceId, itemId, mutate) {
+         displayName: mapping.displayName || mapping.DisplayName || itemId,
+         description: mapping.description ?? mapping.Description ?? null,
+         dataType: mapping.dataType || mapping.DataType || 'Auto',
+         uaNodeId: mapping.uaNodeId || mapping.UaNodeId || defaultUaNodeId(sourceId, itemId),
+         enabled: (mapping.enabled ?? mapping.Enabled) !== false,
+         mode: mapping.mode || mapping.Mode || 'Source',
+         manualValue: mapping.manualValue ?? mapping.ManualValue ?? null,
+         pollRateMs: mapping.pollRateMs ?? mapping.PollRateMs ?? 0,
+         deadbandPct: Number(mapping.deadbandPct ?? mapping.DeadbandPct ?? 0),
+         writeable: (mapping.writeable ?? mapping.Writeable) === true,
+-        accessRights: mapping.accessRights || mapping.AccessRights || 'Read',
+-        providerSourceId: mapping.providerSourceId || mapping.ProviderSourceId || null,
+-        providerDaItemId: mapping.providerDaItemId || mapping.ProviderDaItemId || null
++        accessRights: mapping.accessRights || mapping.AccessRights || 'Read'
+     };
+     mutate(payload);
+     const r = await fetch('/api/mappings/update', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ tag: payload })
+     });
+     const p = await r.json();
+     if (!r.ok) throw new Error(p.error || ('HTTP ' + r.status));
+     await loadMappings();
+diff --git a/src/OpcBridge.App/HelpContent.cs b/src/OpcBridge.App/HelpContent.cs
+index 86b813a..fccd703 100644
+--- a/src/OpcBridge.App/HelpContent.cs
++++ b/src/OpcBridge.App/HelpContent.cs
+@@ -227,90 +227,60 @@ Set via the faceplate → **Simulation** tab. Independent of Access Rights:
+ | Write | OFF | No DA poll, no UA publish, accept UA→DA writes |
+ | Write | ON | Publish Manual Value + accept UA→DA writes |
+ 
+ ## Disabled Tags
+ 
+ - A tag can be **Disabled** (Setup tab → Enabled checkbox). Disabled tags are not read from DA and not published to UA.
+ - Open a tag's faceplate (Tags tab → click a tag) to change access rights, simulation, update rate, or description.
+ 
+ ---
+ 
+-# Connected Tags (Provider → Consumer)
++# DA Links
+ 
+-A tag can **receive values from another tag** in addition to its own DA source. This is called a **provider link**.
++DA Links are a **separate subsystem** from DA → UA mappings. A provider change on one OPC DA source can write directly to a consumer on another OPC DA source through the bridge's shared DA runtime without changing the mapping payload for that consumer.
+ 
+ ## How it works
+ 
+-- The **provider** tag is read from its DA source normally (Access Rights must include **Read**).
+-- The **consumer** tag keeps its own DA poll **and** receives forwarded writes from the provider (Access Rights must include **Write** or **Read-Write**).
+-- Each time the provider's value changes, the bridge enqueues a write to each consumer via the per-source `WriteQueue`.
+-- Cross-source links are supported — provider and consumer can be on different DA servers.
+-- A tag cannot link to itself (self-link is rejected).
++- The **provider** tag is read from its DA source normally and must have Access Rights that include **Read**.
++- The **consumer** tag keeps its own mapping and must have Access Rights that include **Write** or **Read-Write** so the bridge can forward provider changes into its DA server.
++- DA Links share the bridge runtime with mappings, so cross-source forwarding works even when the provider and consumer live on different OPC DA servers.
++- Runtime forwarding is driven by stored `DaLinkRule` entries. Legacy `providerSourceId` / `providerDaItemId` fields exist only for migration from older mapping files.
+ 
+-## Data flow with a link
++## Setting up links
++
++1. Open the **Links** tab.
++2. Pick a **Consumer** tag.
++3. Pick a **Provider** tag.
++4. Click **Save Link**.
++5. The link appears in the Links list and can be removed with **Delete Link**.
++
++## Rules
++
++- A tag cannot link to itself.
++- Cross-source links are supported.
++- Provider and consumer must use the same canonical OPC DA type.
++- v1 allows only **one provider per consumer**.
++- Clearing a DA Link stops forwarding immediately and leaves the DA → UA mapping unchanged.
++
++## Runtime flow
+ 
+ ```
+   DA Server A                          DA Server B
+       │                                    │
+   Provider Tag                         Consumer Tag
+-      │                                    │
+-      ▼                                    ▼
+-  BridgeWorker.PollSourceAsync(A)    BridgeWorker.PollSourceAsync(B)
+-      │                                    │
+-      ├── value read ──► UA node            ├── value read ──► UA node
+-      │                                    │
+-      └── ForwardToConsumers ──► WriteQueue(B) ──► IOPCSyncIO.Write
+-          (provider value forwarded          (consumer gets provider's value
+-           to consumer's DA server)          written to its own DA server)
++  BridgeWorker poll/subscription      BridgeWorker mapping/runtime state
+ ```
+-
+-## Setting up a link
+-
+-Two ways to create a provider → consumer link:
+-
+-### Via the Links tab
+-
+-1. Open the **Links** tab.
+-2. Pick a **Consumer** tag from the first dropdown.
+-3. Pick a **Provider** tag from the second dropdown.
+-4. Click **Set Link**.
+-5. The link appears in the list with a "⇠ fed by" indicator.
+-6. Click **Unlink** on any link to remove it.
+-
+-### Via the faceplate
+-
+-1. Open the **Tags** tab, click a tag to open its faceplate.
+-2. Go to the **Setup** subtab.
+-3. Pick a provider from the **Provider** dropdown (or "— none —" to remove).
+-4. Click **Apply**.
+-
+-## Visual indicators
+-
+-- Tags tab: consumer rows show a blue **⇠ fed** badge with a tooltip naming the provider.
+-- Links tab: each link row shows consumer ⇠ fed by provider, with an **Unlink** button.
+-- UA node description: shows "fed by {providerSourceId}/{providerDaItemId}".
+-
+-## Rules
+-
+-| Provider Access | Consumer Access | Link allowed? |
+-| Read | Read-Write | ✅ Yes |
+-| Read | Write | ✅ Yes |
+-| Read-Write | Read-Write | ✅ Yes (provider is read) |
+-| Write | Read-Write | ❌ No (provider has no Read) |
+-| Read | Read | ❌ No (consumer has no Write) |
+-
+-- If the provider is later set to **Write**-only, forwarding stops (no values to forward).
+-- If the consumer is later set to **Read**-only, forwarding stops (cannot accept writes).
+-- Clearing a link (setting Provider to "— none —") immediately stops forwarding.
+ 
+ ---
+ 
+ # OPC UA Server
+@@ -789,14 +759,13 @@ Always preserve `pki/` across updates. It's listed in the update guide as "never
+ | `displayName` | = daItemId | Label shown in UA and dashboard |
+ | `description` | `null` | Operator-entered notes/description (shown as tooltip in tag list) |
+ | `dataType` | `Double` | Data type hint for UA node |
+ | `enabled` | `true` | Include in DA reads and UA publishing |
+ | `accessRights` | `Read` | `Read` (DA→UA), `Read-Write` (DA↔UA), or `Write` (UA→DA only) |
+ | `mode` | `Source` | `Source` (live DA value) or `Manual` (simulation — publishes ManualValue) |
+ | `manualValue` | `null` | Fixed value when mode is `Manual` (simulation) |
+ | `pollRateMs` | `0` | Per-tag update rate in ms (0 = source default) |
+ | `deadbandPct` | `0` | Deadband % for subscription filtering (0–100; 0 = no filter) |
+ | `writeable` | `false` | Derived from accessRights — true for Read-Write and Write |
+-| `providerSourceId` | `null` | Source ID of the provider tag that feeds this consumer (null = no link) |
+-| `providerDaItemId` | `null` | DA Item ID of the provider tag (null = no link) |
++
+ """;
+ }
+diff --git a/src/OpcBridge.App/MappingRequests.cs b/src/OpcBridge.App/MappingRequests.cs
+index d5ab881..d5ab881 100644
+--- a/src/OpcBridge.App/MappingRequests.cs
++++ b/src/OpcBridge.App/MappingRequests.cs
+@@ -6,19 +6,17 @@ public sealed record MappingTagDto(
+     string? DisplayName = null,
+     string? Description = null,
+     string? DataType = null,
+     string? UaNodeId = null,
+     bool? Enabled = null,
+     string? Mode = null,
+     string? ManualValue = null,
+     int? PollRateMs = null,
+     float? DeadbandPct = null,
+     bool? Writeable = null,
+-    string? AccessRights = null,
+-    string? ProviderSourceId = null,
+-    string? ProviderDaItemId = null);
++    string? AccessRights = null);
+ 
+ public sealed record MappingAddRequest(List<MappingTagDto>? Tags);
+ 
+ public sealed record MappingRemoveRequest(string SourceId, string DaItemId);
+ 
+ public sealed record MappingUpdateRequest(MappingTagDto Tag);
+diff --git a/src/OpcBridge.App/Program.cs b/src/OpcBridge.App/Program.cs
+index ba95351..f069d26 100644
+--- a/src/OpcBridge.App/Program.cs
++++ b/src/OpcBridge.App/Program.cs
+@@ -347,22 +347,20 @@ app.MapPost("/api/mappings/add", (MappingAddRequest request, MappingStore store) =>
+     if (request.Tags.Any(tag => string.IsNullOrWhiteSpace(tag.SourceId) || string.IsNullOrWhiteSpace(tag.DaItemId)))
+     {
+         return Results.BadRequest(new { error = "Source ID and DA Item ID are required for every mapping." });
+     }
+ 
+             IEnumerable<TagMapping> tags = request.Tags
+                 .Select(tag => new TagMapping
+                 {
+                     SourceId = tag.SourceId,
+                     DaItemId = tag.DaItemId,
+-                    ProviderSourceId = tag.ProviderSourceId,
+-                    ProviderDaItemId = tag.ProviderDaItemId,
+                     DisplayName = tag.DisplayName ?? string.Empty,
+                     Description = tag.Description,
+                     DataType = tag.DataType ?? "Auto",
+                     UaNodeId = tag.UaNodeId ?? string.Empty,
+                     Enabled = tag.Enabled ?? true,
+                     Mode = string.IsNullOrWhiteSpace(tag.Mode) ? TagMode.Source : tag.Mode,
+                     ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue,
+                     PollRateMs = tag.PollRateMs ?? 0,
+                     DeadbandPct = tag.DeadbandPct ?? 0f,
+                     Writeable = tag.Writeable ?? false,
+@@ -377,59 +375,57 @@ app.MapPost("/api/mappings/bulk-add", (MappingAddRequest request, MappingStore s
+     if (request.Tags is null || request.Tags.Count == 0)
+     {
+         return Results.BadRequest(new { error = "At least one mapping is required." });
+     }
+ 
+             IEnumerable<TagMapping> tags = request.Tags
+                 .Select(tag => new TagMapping
+                 {
+                     SourceId = string.IsNullOrWhiteSpace(tag.SourceId) ? "default" : tag.SourceId,
+                     DaItemId = tag.DaItemId ?? string.Empty,
+-                    ProviderSourceId = tag.ProviderSourceId,
+-                    ProviderDaItemId = tag.ProviderDaItemId,
+                     Description = tag.Description,
+                     DisplayName = tag.DisplayName ?? string.Empty,
+                     DataType = tag.DataType ?? "Auto",
+                     UaNodeId = tag.UaNodeId ?? string.Empty,
+                     Enabled = tag.Enabled ?? true,
+                     Mode = string.IsNullOrWhiteSpace(tag.Mode) ? TagMode.Source : tag.Mode,
+                     ManualValue = string.IsNullOrWhiteSpace(tag.ManualValue) ? null : tag.ManualValue,
+                     PollRateMs = tag.PollRateMs ?? 0,
+                     Writeable = tag.Writeable ?? false,
++                    DeadbandPct = tag.DeadbandPct ?? 0f,
+                     AccessRights = string.IsNullOrWhiteSpace(tag.AccessRights) ? TagAccessRights.Read : tag.AccessRights
+                 })
+                 .Where(tag => !string.IsNullOrWhiteSpace(tag.DaItemId));
+ 
+     long version = store.Add(tags);
+     return Results.Json(new { version, received = request.Tags.Count });
+     });
+ app.MapPost("/api/mappings/update", (MappingUpdateRequest request, MappingStore store) =>
+ {
+     if (string.IsNullOrWhiteSpace(request.Tag.SourceId) || string.IsNullOrWhiteSpace(request.Tag.DaItemId))
+     {
+         return Results.BadRequest(new { error = "Source ID and DA Item ID are required." });
+     }
+ 
+         TagMapping tag = new()
+         {
+             SourceId = request.Tag.SourceId,
+             DaItemId = request.Tag.DaItemId,
+-            ProviderSourceId = request.Tag.ProviderSourceId,
+-            ProviderDaItemId = request.Tag.ProviderDaItemId,
+             DisplayName = request.Tag.DisplayName ?? string.Empty,
+             Description = request.Tag.Description,
+             DataType = request.Tag.DataType ?? "Auto",
+             UaNodeId = request.Tag.UaNodeId ?? string.Empty,
+             Enabled = request.Tag.Enabled ?? true,
+             Mode = string.IsNullOrWhiteSpace(request.Tag.Mode) ? TagMode.Source : request.Tag.Mode,
+             ManualValue = string.IsNullOrWhiteSpace(request.Tag.ManualValue) ? null : request.Tag.ManualValue,
+             PollRateMs = request.Tag.PollRateMs ?? 0,
++            DeadbandPct = request.Tag.DeadbandPct ?? 0f,
+             Writeable = request.Tag.Writeable ?? false,
+             AccessRights = string.IsNullOrWhiteSpace(request.Tag.AccessRights) ? TagAccessRights.Read : request.Tag.AccessRights
+         };
+ 
+     if (!store.TryUpdate(tag, out long version))
+     {
+         return Results.NotFound(new { error = "Mapping not found." });
+     }
+ 
+     return Results.Json(new { version });
+diff --git a/tests/OpcBridge.LoadTest/ConnectedTagsTests.cs b/tests/OpcBridge.LoadTest/ConnectedTagsTests.cs
+index df501b4..ba3170a 100644
+--- a/tests/OpcBridge.LoadTest/ConnectedTagsTests.cs
++++ b/tests/OpcBridge.LoadTest/ConnectedTagsTests.cs
+@@ -1,118 +1,85 @@
+ using System.Text.Json;
+ using Microsoft.Extensions.Options;
+ using OpcBridge.App;
+ using OpcBridge.Core;
+ using Xunit;
+ 
+ namespace OpcBridge.LoadTest;
+ 
+ public sealed class ConnectedTagsTests
+ {
+-    // MappingStore persists to a fixed file under AppContext.BaseDirectory. Clear it before each
+-    // test so a prior run cannot leak mappings into the snapshot under test.
+-    private static MappingStore CreateStore()
++    private static DaLinkStore CreateLinkStore()
+     {
+-        string path = Path.Combine(AppContext.BaseDirectory, "mappings.json");
++        string path = Path.Combine(AppContext.BaseDirectory, "links.json");
+         if (File.Exists(path))
+         {
+             File.Delete(path);
+         }
+ 
+-        return new MappingStore(Options.Create(new BridgeOptions()));
++        return new DaLinkStore(Options.Create(new BridgeOptions()));
+     }
+ 
+     [Fact]
+-    public void SelfLinkRejected()
++    public void MappingRequestDto_DoesNotExposeProviderEditFields()
+     {
+-        MappingStore store = CreateStore();
+-
+-        var tag = new TagMapping
+-        {
+-            SourceId = "srcA",
+-            DaItemId = "itemA",
+-            ProviderSourceId = "srcA",
+-            ProviderDaItemId = "itemA",
+-            AccessRights = TagAccessRights.ReadWrite
+-        };
+-
+-        store.Add(new[] { tag });
+-        (IReadOnlyList<TagMapping> mappings, _) = store.GetSnapshot();
+-
+-        TagMapping stored = Assert.Single(mappings);
+-        Assert.Null(stored.ProviderSourceId);
+-        Assert.Null(stored.ProviderDaItemId);
++        Assert.Null(typeof(MappingTagDto).GetProperty("ProviderSourceId"));
++        Assert.Null(typeof(MappingTagDto).GetProperty("ProviderDaItemId"));
+     }
+ 
+     [Fact]
+-    public void ValidLinkPreserved()
++    public void LegacyProviderFields_RoundTripForMigrationCompatibility()
+     {
+-        MappingStore store = CreateStore();
+-
+         var tag = new TagMapping
+         {
+-            SourceId = "consumer",
+-            DaItemId = "cItem",
+-            ProviderSourceId = "  srcA  ",
+-            ProviderDaItemId = "  itemA  ",
+-            AccessRights = TagAccessRights.Write
++            SourceId = "consumerA",
++            DaItemId = "itemC",
++            ProviderSourceId = "providerA",
++            ProviderDaItemId = "itemP"
+         };
+ 
+-        store.Add(new[] { tag });
+-        (IReadOnlyList<TagMapping> mappings, _) = store.GetSnapshot();
++        string json = JsonSerializer.Serialize(tag);
++        Assert.Contains("\"ProviderSourceId\"", json);
++        Assert.Contains("\"ProviderDaItemId\"", json);
+ 
+-        TagMapping stored = Assert.Single(mappings);
+-        Assert.Equal("srcA", stored.ProviderSourceId);
+-        Assert.Equal("itemA", stored.ProviderDaItemId);
++        TagMapping? roundTripped = JsonSerializer.Deserialize<TagMapping>(json);
++        Assert.NotNull(roundTripped);
++        Assert.Equal("providerA", roundTripped!.ProviderSourceId);
++        Assert.Equal("itemP", roundTripped.ProviderDaItemId);
+     }
+ 
+     [Fact]
+-    public void BlankProviderNormalizedToNull()
++    public void LegacyProviderFields_MigrateIntoDaLinkRules()
+     {
+-        MappingStore store = CreateStore();
++        DaLinkStore store = CreateLinkStore();
+ 
+-        var tag = new TagMapping
+-        {
+-            SourceId = "srcB",
+-            DaItemId = "itemB",
+-            ProviderSourceId = "   ",
+-            ProviderDaItemId = "\t",
+-            AccessRights = TagAccessRights.Read
+-        };
+-
+-        store.Add(new[] { tag });
+-        (IReadOnlyList<TagMapping> mappings, _) = store.GetSnapshot();
+-
+-        TagMapping stored = Assert.Single(mappings);
+-        Assert.Null(stored.ProviderSourceId);
+-        Assert.Null(stored.ProviderDaItemId);
+-    }
+-
+-    [Fact]
+-    public void JsonRoundTripIncludesProviderFields()
+-    {
+-        var tag = new TagMapping
+-        {
+-            SourceId = "consumer",
+-            DaItemId = "cItem",
+-            ProviderSourceId = "srcA",
+-            ProviderDaItemId = "itemA"
+-        };
++        int migrated = store.MigrateFromMappings(
++            new[]
++            {
++                new TagMapping
++                {
++                    SourceId = "consumerA",
++                    DaItemId = "itemC",
++                    ProviderSourceId = "providerA",
++                    ProviderDaItemId = "itemP",
++                    Enabled = true
++                }
++            });
+ 
+-        string json = JsonSerializer.Serialize(tag);
+-        Assert.Contains("\"ProviderSourceId\"", json);
+-        Assert.Contains("\"ProviderDaItemId\"", json);
++        (IReadOnlyList<DaLinkRule> rules, _) = store.GetSnapshot();
+ 
+-        TagMapping? roundTripped = JsonSerializer.Deserialize<TagMapping>(json);
+-        Assert.NotNull(roundTripped);
+-        Assert.Equal("srcA", roundTripped!.ProviderSourceId);
+-        Assert.Equal("itemA", roundTripped.ProviderDaItemId);
++        Assert.Equal(1, migrated);
++        DaLinkRule rule = Assert.Single(rules);
++        Assert.Equal("providerA", rule.ProviderSourceId);
++        Assert.Equal("itemP", rule.ProviderItemId);
++        Assert.Equal("consumerA", rule.ConsumerSourceId);
++        Assert.Equal("itemC", rule.ConsumerItemId);
+     }
+ 
+     [Fact]
+     public void RuntimeIndex_UsesDaLinkRules_NotMappingProviderFields()
+     {
+         var rules = new[]
+         {
+             new DaLinkRule(Guid.NewGuid(), "providerA", "itemP", "consumerA", "itemC", true, 5, 5)
+         };
+@@ -127,14 +94,15 @@ public sealed class ConnectedTagsTests
+                     ProviderDaItemId = "legacyItem",
+                     AccessRights = TagAccessRights.Write
+                 }
+             },
+             rules: rules);
+ 
+         IReadOnlyList<TagMapping> consumers = cache.GetConsumersByProvider("providerA", "itemP");
+         TagMapping consumer = Assert.Single(consumers);
+         Assert.Equal("consumerA", consumer.SourceId);
+         Assert.Equal("itemC", consumer.DaItemId);
++
+         IReadOnlyList<TagMapping> legacyConsumers = cache.GetConsumersByProvider("legacyProvider", "legacyItem");
+         Assert.Empty(legacyConsumers);
+     }
+ }
+diff --git a/tests/OpcBridge.LoadTest/HelpContentTests.cs b/tests/OpcBridge.LoadTest/HelpContentTests.cs
+new file mode 100644
+index 0000000..5951b42
+--- /dev/null
++++ b/tests/OpcBridge.LoadTest/HelpContentTests.cs
+@@ -0,0 +1,15 @@
++using OpcBridge.App;
++using Xunit;
++
++namespace OpcBridge.LoadTest;
++
++public sealed class HelpContentTests
++{
++    [Fact]
++    public void HelpText_DescribesDaLinksAsIndependentSubsystem()
++    {
++        Assert.Contains("DA Links", HelpContent.Markdown);
++        Assert.Contains("separate subsystem", HelpContent.Markdown);
++        Assert.DoesNotContain("faceplate → Setup → Provider", HelpContent.Markdown);
++    }
++}
