@@ -182,7 +182,7 @@ internal sealed class BridgeAppDiscovery : BackgroundService
             using var healthCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             healthCts.CancelAfter(ProbeTimeout);
 
-            var healthResponse = await client.GetAsync($"{baseUrl}/health", healthCts.Token).ConfigureAwait(false);
+             using var healthResponse = await client.GetAsync($"{baseUrl}/health", healthCts.Token).ConfigureAwait(false);
             if (healthResponse.StatusCode != HttpStatusCode.OK)
             {
                 return null;
@@ -198,7 +198,7 @@ internal sealed class BridgeAppDiscovery : BackgroundService
             using var appInfoCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             appInfoCts.CancelAfter(ProbeTimeout);
 
-            var appInfoResponse = await client.GetAsync($"{baseUrl}/api/app-info", appInfoCts.Token).ConfigureAwait(false);
+             using var appInfoResponse = await client.GetAsync($"{baseUrl}/api/app-info", appInfoCts.Token).ConfigureAwait(false);
             if (appInfoResponse.StatusCode != HttpStatusCode.OK)
             {
                 return null;
