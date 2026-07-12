@@ -99,7 +99,8 @@ app.MapGet("/api/logs", (DashboardLogStore logStore, int? limit, string? level) 
          processArchitecture = info.ProcessArchitecture,
          osDescription = info.OsDescription,
          machineName = info.MachineName,
-         creator = info.Creator
+        creator = info.Creator,
+        section = info.Section
      });
  });
 app.MapGet("/api/version", () =>

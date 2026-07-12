@@ -11,7 +11,8 @@ public sealed record AppInfoSnapshot(
     string ProcessArchitecture,
     string OsDescription,
     string MachineName,
-    string Creator)
+    string Creator,
+    string Section)
 {
     public static AppInfoSnapshot CreateCurrent()
     {
@@ -25,6 +26,7 @@ public sealed record AppInfoSnapshot(
             RuntimeInformation.ProcessArchitecture.ToString(),
             RuntimeInformation.OSDescription,
             Environment.MachineName,
-            "xlibraboy");
+            "Budi Kurniawan",
+            "AM2");
     }
 }

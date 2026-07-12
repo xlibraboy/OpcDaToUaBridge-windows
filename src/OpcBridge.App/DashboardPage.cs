@@ -587,6 +587,7 @@ internal static class DashboardPage
                 <div class="k">Operating System</div><div class="v" id="aboutOs">—</div>
                 <div class="k">Machine</div><div class="v" id="aboutMachine">—</div>
                 <div class="k">Creator</div><div class="v" id="aboutCreator">—</div>
+                <div class="k">Section</div><div class="v" id="aboutSection">—</div>
             </div>
         </div>
     </div>
@@ -1174,6 +1175,7 @@ async function loadAppInfo(force = false) {
     el('aboutOs').textContent = payload.osDescription || '—';
     el('aboutMachine').textContent = payload.machineName || '—';
     el('aboutCreator').textContent = payload.creator || '—';
+    el('aboutSection').textContent = payload.section || '—';
     state.appInfoLoaded = true;
 }
 
