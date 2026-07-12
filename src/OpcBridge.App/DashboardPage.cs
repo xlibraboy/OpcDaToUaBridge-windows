@@ -225,7 +225,8 @@ internal static class DashboardPage
         <div class="pill"><span class="k">DA</span><span id="pDa">&#8212;</span></div>
         <div class="pill"><span class="k">UA</span><span id="pUa">&#8212;</span></div>
         <div class="pill"><span class="k">Tags</span><b id="pTags">0</b></div>
-        <div class="pill"><span class="k">Sources</span><b id="pSources">0</b></div>
+         <div class="pill"><span class="k">Sources</span><b id="pSources">0</b></div>
+         <div class="pill"><span class="k">Apps</span><b id="pApps">1</b></div>
     </div>
     <div class="clock" id="clock">&#8212;</div>
 </div>
@@ -1235,13 +1236,15 @@ async function refresh() {
         const b = p.bridge || p.Bridge || {};
         const ua = p.ua || p.Ua || {};
         const vs = p.values || p.Values || [];
-        const sources = get(b, 'sources') || [];
-        el('dot').className = 'dot';
-        el('clock').textContent = new Date().toLocaleTimeString();
-        el('pBridge').innerHTML = badge(get(b, 'bridgeState') || '—', stateClass(get(b, 'bridgeState')));
-        el('pDa').innerHTML = badge(get(b, 'daConnectionState') || '—', stateClass(get(b, 'daConnectionState')));
-        el('pUa').innerHTML = badge(get(ua, 'state') || '—', stateClass(get(ua, 'state')));
-        el('pTags').textContent = get(b, 'mappingCount') ?? 0;
+         const sources = get(b, 'sources') || [];
+         const apps = p.apps || p.Apps || {};
+         el('dot').className = 'dot';
+         el('clock').textContent = new Date().toLocaleTimeString();
+         el('pBridge').innerHTML = badge(get(b, 'bridgeState') || '—', stateClass(get(b, 'bridgeState')));
+         el('pDa').innerHTML = badge(get(b, 'daConnectionState') || '—', stateClass(get(b, 'daConnectionState')));
+         el('pUa').innerHTML = badge(get(ua, 'state') || '—', stateClass(get(ua, 'state')));
+         el('pTags').textContent = get(b, 'mappingCount') ?? 0;
+         el('pApps').textContent = get(apps, 'detectedCount') ?? 1;
         el('bridgeState').innerHTML = badge(get(b, 'bridgeState') || '—', stateClass(get(b, 'bridgeState')));
         const err = get(b, 'lastError');
         el('lastError').textContent = err || 'No errors';

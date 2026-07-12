@@ -10,22 +10,22 @@ $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $PSCommandPath
 $repoRoot = Split-Path -Parent (Split-Path -Parent $scriptRoot)
 $publishDir = Join-Path $repoRoot 'publish'
-$publishExe = Join-Path $publishDir 'OpcBridge.App.exe'
-$cmdScript = Join-Path $scriptRoot 'start-bridge-detached.cmd'
-
-if (-not (Test-Path $publishExe)) {
-    throw "Publish exe not found: $publishExe"
-}
+ $publishDll = Join-Path $publishDir 'OpcBridge.App.dll'
+ $cmdScript = Join-Path $scriptRoot 'start-published-bridge.cmd'
+ 
+ if (-not (Test-Path $publishDll)) {
+     throw "Publish dll not found: $publishDll"
+ }
 
 if (-not (Test-Path $cmdScript)) {
     throw "Launcher cmd not found: $cmdScript"
 }
 
-Get-CimInstance Win32_Process | Where-Object {
-    $_.Name -eq 'OpcBridge.App.exe' -or ($_.Name -eq 'dotnet.exe' -and $_.CommandLine -like '*OpcBridge.App*')
-} | ForEach-Object {
-    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-}
+ Get-CimInstance Win32_Process | Where-Object {
+     $_.Name -eq 'OpcBridge.App.exe' -or ($_.Name -eq 'dotnet.exe' -and ($_.CommandLine -like '*OpcBridge.App.dll*' -or $_.CommandLine -like '*OpcBridge.App*'))
+ } | ForEach-Object {
+     Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+ }
 
 $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c `"$cmdScript`""
 $trigger = New-ScheduledTaskTrigger -AtStartup
@@ -59,7 +59,7 @@ try {
 
 [pscustomobject]@{
     repoRoot = $repoRoot
-    publishExeExists = Test-Path $publishExe
+     publishDllExists = Test-Path $publishDll
     cmdScriptExists = Test-Path $cmdScript
     health = if ($health) { $health.status } else { 'down' }
     taskState = (Get-ScheduledTask -TaskName $TaskName).State.ToString()
