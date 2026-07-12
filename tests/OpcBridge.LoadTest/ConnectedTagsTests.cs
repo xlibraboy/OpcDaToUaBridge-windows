@@ -51,7 +51,7 @@ public sealed class ConnectedTagsTests
             loggerFactory.CreateLogger<BridgeWorker>(),
             new MqttBridge(loggerFactory.CreateLogger<MqttBridge>()),
             new MqttRuntimeSettings(Options.Create(new MqttBrokerOptions())),
-            new MqttTrafficStore());
+            new MqttValueStore());
     }
 
     private static void SetPrivateField(object instance, string name, object value)

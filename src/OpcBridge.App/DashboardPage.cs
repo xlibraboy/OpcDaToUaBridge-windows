@@ -174,7 +174,12 @@ internal static class DashboardPage
         .log-entry .meta .lvl.warning { color: var(--warn); }
         .log-entry .meta .lvl.error, .log-entry .meta .lvl.critical { color: var(--bad); }
         .log-entry .message.error, .log-entry .message.critical { color: var(--bad); }
-        .log-entry .message.warning { color: var(--warn); }
+        .help-subtabs { display: flex; gap: 2px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px; margin-bottom: 12px; }
+        .help-subtab { flex: 1; background: none; border: none; color: var(--muted); padding: 8px 16px; font-size: 12px; font-weight: 600; cursor: pointer; border-radius: 4px; transition: all .15s ease; }
+        .help-subtab:hover { color: var(--text); background: var(--panel2); }
+        .help-subtab.active { color: var(--text); background: var(--panel2); box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+        .help-subtab-content { display: none; }
+        .help-subtab-content.active { display: block; }
         .help-accordion { display: flex; flex-direction: column; gap: 8px; }
         .help-section { background: var(--panel); border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
         .help-section > summary { padding: 10px 14px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 8px; user-select: none; list-style: none; }
@@ -572,7 +577,20 @@ internal static class DashboardPage
     </div>
 </div>
 <div class="view" id="view-help">
-    <div class="help-accordion" id="helpContent"><span class="msg">Loading help…</span></div>
+    <div class="help-subtabs">
+        <button class="help-subtab active" onclick="switchHelpSubTab('getting-started')">Getting Started</button>
+        <button class="help-subtab" onclick="switchHelpSubTab('dashboard-tabs')">Dashboard Tabs</button>
+        <button class="help-subtab" onclick="switchHelpSubTab('reference')">Reference</button>
+    </div>
+    <div class="help-subtab-content active" id="help-getting-started">
+        <div class="help-accordion" id="helpContent1"><span class="msg">Loading help…</span></div>
+    </div>
+    <div class="help-subtab-content" id="help-dashboard-tabs">
+        <div class="help-accordion" id="helpContent2"></div>
+    </div>
+    <div class="help-subtab-content" id="help-reference">
+        <div class="help-accordion" id="helpContent3"></div>
+    </div>
 </div>
 <div class="view" id="view-about">
     <div class="box">
@@ -1218,16 +1236,35 @@ function renderMarkdown(md) {
 async function loadHelp() {
     if (helpLoaded) return;
     const p = await (await fetch('/api/help', { cache: 'no-store' })).json();
-    const sections = (p.markdown || '').split(/\r?\n---\r?\n/).filter(s => s.trim());
-    const container = el('helpContent');
-    container.innerHTML = sections.map((section, i) => {
-        const titleMatch = section.match(/^#\s+(.+)/m);
-        const title = titleMatch ? titleMatch[1] : 'Section';
-        const body = renderMarkdown(section.replace(/^#\s+.+/m, ''));
-        const openAttr = i < 2 ? ' open' : '';
-        return `<details class="help-section"${openAttr}><summary>${esc(title)}</summary><div class="help-body">${body}</div></details>`;
-    }).join('');
+    const groups = (p.markdown || '').split(/\r?\n===\r?\n/).filter(s => s.trim());
+    
+    const renderGroup = (groupMarkdown, containerId, openCount = 2) => {
+        const sections = groupMarkdown.split(/\r?\n---\r?\n/).filter(s => s.trim());
+        const container = el(containerId);
+        if (!container) return;
+        container.innerHTML = sections.map((section, i) => {
+            const titleMatch = section.match(/^#\s+(.+)/m);
+            const title = titleMatch ? titleMatch[1] : 'Section';
+            const body = renderMarkdown(section.replace(/^#\s+.+/m, ''));
+            const openAttr = i < openCount ? ' open' : '';
+            return `<details class="help-section"${openAttr}><summary>${esc(title)}</summary><div class="help-body">${body}</div></details>`;
+        }).join('');
+    };
+    
+    renderGroup(groups[0] || '', 'helpContent1', 2);
+    renderGroup(groups[1] || '', 'helpContent2', 2);
+    renderGroup(groups[2] || '', 'helpContent3', 1);
+    
     helpLoaded = true;
+}
+
+function switchHelpSubTab(tabName) {
+    document.querySelectorAll('.help-subtab').forEach(btn => {
+        btn.classList.toggle('active', btn.textContent.toLowerCase().replace(/\s+/g, '-') === tabName);
+    });
+    document.querySelectorAll('.help-subtab-content').forEach(content => {
+        content.classList.toggle('active', content.id === 'help-' + tabName);
+    });
 }
 
 async function refresh() {
