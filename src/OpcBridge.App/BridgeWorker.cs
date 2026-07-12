@@ -685,7 +685,7 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
         bool ok = await ApplyUaWriteAsync(sourceId, daItemId, converted, message.TimestampUtc ?? DateTime.UtcNow, CancellationToken.None).ConfigureAwait(false);
         if (!ok)
         {
-            logger_.LogWarning("MQTT inbound write rejected for {SourceId}/{ItemId}", sourceId, daItemId);
+            logger_.LogDebug("MQTT inbound write rejected for {SourceId}/{ItemId}", sourceId, daItemId);
         }
     }
 

@@ -11,7 +11,7 @@ $scriptRoot = Split-Path -Parent $PSCommandPath
 $repoRoot = Split-Path -Parent (Split-Path -Parent $scriptRoot)
 $publishDir = Join-Path $repoRoot 'publish'
 $publishExe = Join-Path $publishDir 'OpcBridge.App.exe'
-$cmdScript = Join-Path $scriptRoot 'start-published-bridge.cmd'
+$cmdScript = Join-Path $scriptRoot 'start-bridge-detached.cmd'
 
 if (-not (Test-Path $publishExe)) {
     throw "Publish exe not found: $publishExe"
