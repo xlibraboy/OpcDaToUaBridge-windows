@@ -2092,7 +2092,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     setInterval(refresh, 1000);
     setInterval(() => { if (el('logAutoRefresh')?.checked && document.querySelector('#view-logs.active')) { state.logsLoaded = false; loadLogs(true).catch(() => {}); } }, 3000);
     setInterval(() => { if (diagnosticsActive) loadDiagnostics().catch(() => {}); }, 2000);
-    setInterval(() => { if (el('mqttValAuto')?.checked && document.querySelector('#view-mqtt.active')) loadMqttValues().catch(() => {}); }, 2000);
+    setInterval(() => {
+        if (!document.querySelector('#view-mqtt.active')) return;
+        loadMqtt().catch(() => {});
+        if (el('mqttValAuto')?.checked) loadMqttValues().catch(() => {});
+    }, 2000);
     if (initTab === 'logs') await loadLogs();
     if (initTab === 'help') await loadHelp();
     if (initTab === 'about') await loadAppInfo();
