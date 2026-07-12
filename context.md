@@ -1,6 +1,6 @@
 # context.md — OpcDaToUaBridge
 
-Instruction file for AI agents working in this repo. All facts below are verified against committed code on `main` as of 2026-07-01.
+Instruction file for AI agents working in this repo. All facts below are verified against committed code on `main` as of 2026-07-12.
 
 ## What this project is
 
