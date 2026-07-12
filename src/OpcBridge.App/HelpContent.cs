@@ -77,7 +77,10 @@ internal static class HelpContent
 │  Links ──► connected tags: set/clear provider→consumer links, view all connections   │
   │  Help ──► this page                                                  │
   │                                                                      │
-  │  HTTP API: /api/dashboard, /api/mappings, /api/da/sources, etc.      │
+   │  HTTP API: /api/dashboard, /api/mappings, /api/da/sources, etc.      │
+   │                                                                      │
+   │  **Apps Pill**: Shows count of detected bridge instances across all    │
+   │  configured DA source hosts. Updates every 10 seconds.                 │
   └─────────────────────────────────────────────────────────────────────┘
 ```
 

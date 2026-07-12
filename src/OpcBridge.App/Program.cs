@@ -36,24 +36,29 @@ builder.Services.AddSingleton<MqttRuntimeSettings>();
 builder.Services.AddSingleton<MqttTrafficStore>();
 builder.Services.AddSingleton<BridgeWorker>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<BridgeWorker>());
-builder.Services.AddHostedService<OpcBridgeMonitor>();
+ builder.Services.AddHostedService<OpcBridgeMonitor>();
+ builder.Services.AddHttpClient("BridgeAppDiscovery", client => client.Timeout = TimeSpan.FromSeconds(2));
+ builder.Services.AddSingleton<BridgeAppDiscovery>();
+ builder.Services.AddHostedService(sp => sp.GetRequiredService<BridgeAppDiscovery>());
 
 WebApplication app = builder.Build();
 TryMigrateLegacyDaLinks(app);
 
 app.MapGet("/", () => Results.Bytes(System.Text.Encoding.UTF8.GetBytes(DashboardPage.FullHtml), "text/html; charset=utf-8"));
 app.MapGet("/api/values", (BridgeState state) => Results.Json(new { values = state.GetValues() }));
-app.MapGet("/api/status", (BridgeState state, UaServerHost uaServer) => Results.Json(new
-{
-    bridge = state.GetStatus(),
-    ua = uaServer.GetStatus()
-}));
-app.MapGet("/api/dashboard", (BridgeState state, UaServerHost uaServer) => Results.Json(new
-{
-    bridge = state.GetStatus(),
-    ua = uaServer.GetStatus(),
-    values = state.GetValues()
-}));
+ app.MapGet("/api/status", (BridgeState state, UaServerHost uaServer, BridgeAppDiscovery discovery) => Results.Json(new
+ {
+     bridge = state.GetStatus(),
+     ua = uaServer.GetStatus(),
+     apps = discovery.GetStatus()
+ }));
+ app.MapGet("/api/dashboard", (BridgeState state, UaServerHost uaServer, BridgeAppDiscovery discovery) => Results.Json(new
+ {
+     bridge = state.GetStatus(),
+     ua = uaServer.GetStatus(),
+     apps = discovery.GetStatus(),
+     values = state.GetValues()
+ }));
 app.MapGet("/api/diagnostics", (BridgeWorker worker, UaServerHost uaServer) => Results.Json(new
 {
     bridge = worker.GetDiagnostics(),
@@ -82,22 +87,21 @@ app.MapGet("/api/logs", (DashboardLogStore logStore, int? limit, string? level) 
         })
     });
 });
-app.MapGet("/api/app-info", () =>
-{
-    Assembly assembly = typeof(Program).Assembly;
-    AssemblyName assemblyName = assembly.GetName();
-    return Results.Json(new
-    {
-        name = assemblyName.Name ?? "OpcBridge.App",
-        version = assemblyName.Version?.ToString() ?? "0.0.0.0",
-        informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? string.Empty,
-        framework = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
-        processArchitecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
-        osDescription = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
-        machineName = Environment.MachineName,
-        creator = "xlibraboy"
-    });
-});
+ app.MapGet("/api/app-info", () =>
+ {
+     var info = AppInfoSnapshot.CreateCurrent();
+     return Results.Json(new
+     {
+         name = info.Name,
+         version = info.Version,
+         informationalVersion = info.InformationalVersion,
+         framework = info.Framework,
+         processArchitecture = info.ProcessArchitecture,
+         osDescription = info.OsDescription,
+         machineName = info.MachineName,
+         creator = info.Creator
+     });
+ });
 app.MapGet("/api/version", () =>
 {
     Assembly assembly = typeof(Program).Assembly;

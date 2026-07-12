@@ -40,4 +40,18 @@ public sealed class DashboardPageTests
         Assert.Contains("state.linkDraft.consumer = null", DashboardPage.Script);
         Assert.Contains("state.linkDraft.provider = null", DashboardPage.Script);
     }
+
+    [Fact]
+    public void Html_ContainsAppsPill()
+    {
+        Assert.Contains("id=\"pApps\"", DashboardPage.Html);
+        Assert.Contains("Apps", DashboardPage.Html);
+    }
+
+    [Fact]
+    public void Script_UpdatesAppsPillFromDetectedCount()
+    {
+        Assert.Contains("pApps", DashboardPage.Script);
+        Assert.Contains("detectedCount", DashboardPage.Script);
+    }
 }
