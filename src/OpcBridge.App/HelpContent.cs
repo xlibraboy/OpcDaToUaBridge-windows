@@ -3,7 +3,9 @@ namespace OpcBridge.App;
 internal static class HelpContent
 {
     public const string Markdown = """
-# Basic Workflow
+# Getting Started
+
+## Basic Workflow
 
 - Use **Connection** to configure server connections (OPC DA address, credentials, default update rate, and DA subscriptions toggle).
 - Use **Tags** to browse DA items, create DA → OPC UA mappings, and set per-tag Access Rights, Update Rate, Deadband, Description, and Simulation.
@@ -171,6 +173,7 @@ The bridge exposes **all tags from all DA sources** in a single OPC UA server ad
 Each UA node simply reflects whatever value the DA-side poller last read. The client experiences them all as a single UA server with 40 variables.
 ---
 
+===
 
 # Update Rate & Tag Limits
 
@@ -791,6 +794,8 @@ The `pki/` folder is **user data** — it contains the bridge's identity and tru
 - Loses the trusted/rejected client list
 
 Always preserve `pki/` across updates. It's listed in the update guide as "never overwrite".
+
+===
 
 # Configuration Reference
 
