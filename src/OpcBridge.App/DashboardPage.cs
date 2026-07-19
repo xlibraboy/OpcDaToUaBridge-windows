@@ -220,6 +220,133 @@ internal static class DashboardPage
         .info:hover { color: var(--accent); border-color: var(--accent); }
         .tip { position: fixed; z-index: 9999; background: var(--panel2); color: var(--text); border: 1px solid var(--border2); border-radius: 5px; padding: 7px 11px; font-size: 11px; font-weight: 400; line-height: 1.5; max-width: 280px; box-shadow: 0 6px 16px rgba(0,0,0,.4); pointer-events: none; opacity: 0; transition: opacity .1s ease; }
         .tip.show { opacity: 1; }
+
+        /* Diagram Tab Styles */
+        .diag-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+            background: var(--panel);
+        }
+        .diag-tab {
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 6px 14px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.15s;
+        }
+        .diag-tab:hover {
+            background: var(--border);
+        }
+        .diag-tab.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: var(--bg);
+        }
+        .diag-legend {
+            margin-left: auto;
+            display: flex;
+            gap: 16px;
+            font-size: 11px;
+            color: var(--muted);
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .legend-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+        .legend-dot.good { background: var(--good); }
+        .legend-dot.warn { background: var(--warn); }
+        .legend-dot.bad { background: var(--bad); }
+        .legend-dot.off { background: var(--muted); }
+        .diag-canvas {
+            flex: 1;
+            overflow: auto;
+            background: var(--bg);
+            position: relative;
+        }
+        #diagSvg {
+            width: 100%;
+        }
+        .diag-node {
+            cursor: pointer;
+        }
+        .diag-node rect {
+            transition: all 0.15s;
+        }
+        .diag-node:hover rect {
+            stroke-width: 2;
+        }
+        .diag-node text {
+            fill: var(--text);
+            font-size: 11px;
+            font-family: var(--font-mono);
+            pointer-events: none;
+        }
+        .diag-edge {
+            fill: none;
+            stroke-width: 2;
+            transition: stroke 0.3s;
+        }
+        .diag-edge.good { stroke: var(--good); }
+        .diag-edge.warn { stroke: var(--warn); }
+        .diag-edge.bad { stroke: var(--bad); }
+        .diag-edge.off { stroke: var(--muted); opacity: 0.4; }
+        .diag-flow {
+            fill: none;
+            stroke-width: 3;
+            stroke-dasharray: 8 8;
+            stroke-linecap: round;
+            animation: flow 1s linear infinite;
+        }
+        .diag-flow.good { stroke: var(--good); }
+        .diag-flow.warn { stroke: var(--warn); }
+        .diag-flow.bad { stroke: var(--bad); }
+        .diag-flow.off { stroke: var(--muted); opacity: 0.3; animation: none; }
+        @keyframes flow {
+            to { stroke-dashoffset: -16; }
+        }
+        .diag-tooltip {
+            position: absolute;
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 8px 12px;
+            font-size: 11px;
+            color: var(--text);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s;
+            z-index: 1000;
+            max-width: 300px;
+        }
+        .diag-tooltip.visible {
+            opacity: 1;
+        }
+        .diag-tooltip-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            margin: 2px 0;
+        }
+        .diag-tooltip-label {
+            color: var(--muted);
+        }
+        .diag-tooltip-value {
+            font-family: var(--font-mono);
+            font-weight: 500;
+        }
     </style>
 </head>
 <body>
@@ -244,6 +371,7 @@ internal static class DashboardPage
     <button class="tabbtn" data-tab="links" onclick="showTab('links')">OPC DA to DA</button>
     <button class="tabbtn" data-tab="logs" onclick="showTab('logs')">Logs</button>
     <button class="tabbtn" data-tab="mqtt" onclick="showTab('mqtt')">MQTT</button>
+    <button class="tabbtn" data-tab="diagram" onclick="showTab('diagram')">Diagram</button>
     <button class="tabbtn" data-tab="help" onclick="showTab('help')">Help</button>
     <button class="tabbtn" data-tab="about" onclick="showTab('about')">About</button>
 </div>
@@ -667,6 +795,22 @@ internal static class DashboardPage
         </div>
     </div>
 </div>
+<div class="view" id="view-diagram">
+    <div class="diag-toolbar">
+        <button class="diag-tab active" data-diag="all" onclick="showDiagTab('all')">All</button>
+        <button class="diag-tab" data-diag="da-ua" onclick="showDiagTab('da-ua')">DA→UA</button>
+        <button class="diag-tab" data-diag="da-da" onclick="showDiagTab('da-da')">DA to DA</button>
+        <button class="diag-tab" data-diag="mqtt" onclick="showDiagTab('mqtt')">MQTT</button>
+        <div class="diag-legend">
+            <span class="legend-item"><span class="legend-dot good"></span>Good</span>
+            <span class="legend-item"><span class="legend-dot warn"></span>Stale</span>
+            <span class="legend-item"><span class="legend-dot bad"></span>Error</span>
+            <span class="legend-item"><span class="legend-dot off"></span>Disabled</span>
+        </div>
+    </div>
+    <div class="diag-canvas" id="diagCanvas">
+        <svg id="diagSvg" width="100%"></svg>
+    </div>
 </div>
 </div>
 """;
@@ -715,8 +859,637 @@ const state = {
     mqttValFilter: { direction: '', topic: '' },
     valuesByKey: new Map(),
     handleHistory: [],
-    handleBaseline: null
+    handleBaseline: null,
+    diagramTab: 'all',
+    diagramLoaded: false
 };
+
+function showDiagTab(tab) {
+    state.diagramTab = tab;
+    document.querySelectorAll('.diag-tab').forEach(b => b.classList.toggle('active', b.dataset.diag === tab));
+    renderDiagram();
+}
+
+function renderDiagram() {
+    const svg = document.getElementById('diagSvg');
+    if (!svg) return;
+
+    const tab = state.diagramTab || 'all';
+    let html = '';
+    let maxHeight = 600;
+    let maxWidth = 1200;
+
+    if (tab === 'all') {
+        const result = renderAllDiagram();
+        html = result.svg;
+        maxHeight = result.maxHeight;
+        maxWidth = result.maxWidth || 1400;
+    } else if (tab === 'da-ua') {
+        const result = renderDaUaDiagram();
+        html = result.svg;
+        maxHeight = result.maxHeight;
+    } else if (tab === 'da-da') {
+        const result = renderDaDaDiagram();
+        html = result.svg;
+        maxHeight = result.maxHeight;
+    } else if (tab === 'mqtt') {
+        const result = renderMqttDiagram();
+        html = result.svg;
+        maxHeight = result.maxHeight;
+    }
+
+    svg.setAttribute('viewBox', `0 0 ${maxWidth} ${maxHeight}`);
+    svg.setAttribute('height', maxHeight);
+    svg.innerHTML = html;
+}
+
+function linkEndpoints(link) {
+    const providerSourceId = link.providerSourceId || link.ProviderSourceId || 'default';
+    const providerItemId = link.providerItemId || link.ProviderItemId || link.providerDaItemId || link.ProviderDaItemId || '';
+    const consumerSourceId = link.consumerSourceId || link.ConsumerSourceId || link.sourceId || link.SourceId || 'default';
+    const consumerItemId = link.consumerItemId || link.ConsumerItemId || link.consumerDaItemId || link.ConsumerDaItemId || link.daItemId || link.DaItemId || '';
+    return {
+        providerSourceId,
+        providerItemId,
+        consumerSourceId,
+        consumerItemId,
+        providerKey: tagKey(providerSourceId, providerItemId),
+        consumerKey: tagKey(consumerSourceId, consumerItemId),
+        enabled: (link.enabled ?? link.Enabled) !== false
+    };
+}
+
+function collectDaLinks() {
+    const links = [];
+    const seen = new Set();
+    const push = (link, kind) => {
+        const ep = linkEndpoints(link);
+        if (!ep.providerItemId || !ep.consumerItemId) return;
+        if (ep.providerKey === ep.consumerKey) return;
+        const key = ep.providerKey + '=>' + ep.consumerKey;
+        if (seen.has(key)) return;
+        seen.add(key);
+        links.push({ ...link, ...ep, _kind: kind });
+    };
+    (state.daLinks || []).forEach(l => push(l, 'rule'));
+    // legacy provider fields still present on mappings
+    (state.mappings || []).forEach(m => {
+        const pSid = m.providerSourceId || m.ProviderSourceId;
+        const pItem = m.providerDaItemId || m.ProviderDaItemId || m.providerItemId || m.ProviderItemId;
+        if (!pSid || !pItem) return;
+        push({
+            providerSourceId: pSid,
+            providerItemId: pItem,
+            consumerSourceId: m.sourceId || m.SourceId || 'default',
+            consumerItemId: m.daItemId || m.DaItemId || '',
+            enabled: (m.enabled ?? m.Enabled) !== false
+        }, 'legacy');
+    });
+    return links;
+}
+
+function tagShortName(tagOrItemId) {
+    if (tagOrItemId && typeof tagOrItemId === 'object') {
+        const itemId = tagOrItemId.daItemId || tagOrItemId.DaItemId || '';
+        const display = tagOrItemId.displayName || tagOrItemId.DisplayName || '';
+        if (display) return String(display);
+        return String(itemId).split('.').pop() || itemId || '?';
+    }
+    return String(tagOrItemId || '').split('.').pop() || String(tagOrItemId || '?');
+}
+
+function drawEdge(x1, y1, x2, y2, status, color) {
+    return `<path class="diag-edge ${status}" d="M ${x1} ${y1} L ${x2} ${y2}" stroke="${color}"/>` +
+           `<path class="diag-flow ${status}" d="M ${x1} ${y1} L ${x2} ${y2}" stroke="${color}"/>`;
+}
+
+function drawCurve(x1, y1, x2, y2, status, color, lift = 40) {
+    const midX = (x1 + x2) / 2;
+    const midY = Math.min(y1, y2) - lift;
+    return `<path class="diag-edge ${status}" d="M ${x1} ${y1} Q ${midX} ${midY} ${x2} ${y2}" stroke="${color}"/>` +
+           `<path class="diag-flow ${status}" d="M ${x1} ${y1} Q ${midX} ${midY} ${x2} ${y2}" stroke="${color}"/>`;
+}
+
+function mqttBrokerStatus() {
+    const mqttState = (state.mqttConnectionState || el('mqttState')?.textContent || '').toLowerCase();
+    if (mqttState.includes('connected')) return 'good';
+    if (mqttState.includes('connecting') || mqttState.includes('partial')) return 'warn';
+    if (mqttState.includes('fault') || mqttState.includes('error')) return 'bad';
+    return 'off';
+}
+
+function isMqttEnabled(tag) {
+    return (tag.mqttEnabled ?? tag.MqttEnabled) === true;
+}
+
+function renderAllDiagram() {
+    const mappings = state.mappings || [];
+    const sources = state.sources || [];
+    const links = collectDaLinks();
+
+    if (mappings.length === 0 && sources.length === 0) {
+        return { svg: '<text x="50%" y="50%" text-anchor="middle" fill="#6b7689" font-size="14">No sources or tags configured</text>', maxHeight: 600, maxWidth: 1400 };
+    }
+
+    // Columns: DA sources | tags | UA | MQTT
+    const sourceX = 40;
+    const tagX = 280;
+    const uaX = 700;
+    const mqttX = 1000;
+    const colW = { source: 180, tag: 200, hub: 160 };
+    const startY = 70;
+    const tagSpacing = 36;
+    const sourceGap = 28;
+
+    const bySource = new Map();
+    mappings.forEach(m => {
+        const sid = m.sourceId || m.SourceId || 'default';
+        if (!bySource.has(sid)) bySource.set(sid, []);
+        bySource.get(sid).push(m);
+    });
+    // include sources with zero tags so full app topology is visible
+    sources.forEach(s => {
+        const sid = s.sourceId || s.SourceId || 'default';
+        if (!bySource.has(sid)) bySource.set(sid, []);
+    });
+
+    let svg = '';
+    svg += `<text x="40" y="34" fill="#6b7689" font-size="11" font-weight="600">FULL INTERCONNECTION</text>`;
+    svg += `<text x="40" y="50" fill="#6b7689" font-size="10">DA sources → tags → UA · DA-to-DA links · MQTT</text>`;
+
+    const sourcePositions = new Map();
+    const tagPositions = new Map();
+    let currentY = startY;
+    let maxY = startY;
+
+    Array.from(bySource.entries()).forEach(([sourceId, tags]) => {
+        const sourceInfo = sources.find(s => (s.sourceId || s.SourceId) === sourceId);
+        const sourceName = sourceInfo?.displayName || sourceInfo?.DisplayName || sourceId;
+        const sourceStatus = getSourceStatus(sourceId);
+        const sourceColor = getStatusColor(sourceStatus);
+        const blockH = Math.max(tags.length * tagSpacing, 50);
+        const sourceY = currentY + Math.max(0, (blockH - 50) / 2);
+        sourcePositions.set(sourceId, { x: sourceX, y: sourceY, cy: sourceY + 25 });
+
+        svg += `<g class="diag-node" data-source="${escapeHtml(sourceId)}">`;
+        svg += `<rect x="${sourceX}" y="${sourceY}" width="${colW.source}" height="50" rx="6" fill="#11161f" stroke="${sourceColor}" stroke-width="2"/>`;
+        svg += `<text x="${sourceX + colW.source / 2}" y="${sourceY + 20}" text-anchor="middle" fill="#d8e0ea" font-size="12" font-weight="600">${escapeHtml(sourceName)}</text>`;
+        svg += `<text x="${sourceX + colW.source / 2}" y="${sourceY + 38}" text-anchor="middle" fill="#6b7689" font-size="10">${escapeHtml(sourceInfo?.progId || sourceInfo?.ProgId || 'DA source')}</text>`;
+        svg += `</g>`;
+
+        if (tags.length === 0) {
+            const emptyY = currentY + 15;
+            svg += `<text x="${tagX}" y="${emptyY + 14}" fill="#6b7689" font-size="10">(no mapped tags)</text>`;
+            maxY = Math.max(maxY, currentY + 50);
+            currentY += 50 + sourceGap;
+            return;
+        }
+
+        tags.forEach((tag, tagIdx) => {
+            const itemId = tag.daItemId || tag.DaItemId || '';
+            const tKey = tagKey(sourceId, itemId);
+            const tagY = currentY + tagIdx * tagSpacing;
+            const cy = tagY + 15;
+            tagPositions.set(tKey, { x: tagX, y: tagY, cx: tagX + colW.tag / 2, cy, right: tagX + colW.tag, left: tagX });
+
+            const tagStatus = getTagStatus(tag);
+            const tagColor = getStatusColor(tagStatus);
+            const tagName = String(itemId).split('.').pop() || itemId;
+            const mqttOn = (tag.mqttEnabled ?? tag.MqttEnabled) === true;
+
+            svg += drawEdge(sourceX + colW.source, sourceY + 25, tagX, cy, tagStatus, tagColor);
+
+            svg += `<g class="diag-node" data-tag="${escapeHtml(tKey)}">`;
+            svg += `<rect x="${tagX}" y="${tagY}" width="${colW.tag}" height="30" rx="4" fill="#11161f" stroke="${tagColor}" stroke-width="1.5"/>`;
+            svg += `<text x="${tagX + colW.tag / 2}" y="${tagY + 19}" text-anchor="middle" fill="#d8e0ea" font-size="11">${escapeHtml(tagName)}${mqttOn ? ' · MQTT' : ''}</text>`;
+            svg += `</g>`;
+
+            maxY = Math.max(maxY, tagY + 30);
+        });
+
+        currentY += Math.max(tags.length * tagSpacing, 50) + sourceGap;
+        maxY = Math.max(maxY, currentY);
+    });
+
+    // DA-to-DA links between tag nodes (rules + legacy provider fields)
+    links.forEach((link, i) => {
+        const from = tagPositions.get(link.providerKey);
+        const to = tagPositions.get(link.consumerKey);
+        if (!from || !to) return;
+        const status = link.enabled === false ? 'off' : getLinkStatus(link);
+        const color = getStatusColor(status);
+        const lift = 28 + (i % 5) * 10;
+        svg += drawCurve(from.cx, from.cy, to.cx, to.cy, status, color, lift);
+        svg += `<circle cx="${to.cx}" cy="${to.cy - 10}" r="2.5" fill="${color}" opacity="0.8"/>`;
+    });
+
+    // UA hub
+    const anyLive = mappings.some(t => {
+        const s = getTagStatus(t);
+        return s === 'good' || s === 'warn' || s === 'bad';
+    });
+    const uaStatus = anyLive
+        ? (mappings.some(t => getTagStatus(t) === 'bad') ? 'bad' : (mappings.some(t => getTagStatus(t) === 'warn') ? 'warn' : 'good'))
+        : 'off';
+    const uaColor = getStatusColor(uaStatus);
+    const uaY = Math.max(startY, (maxY - startY) / 2);
+    svg += `<g class="diag-node">`;
+    svg += `<rect x="${uaX}" y="${uaY}" width="${colW.hub}" height="56" rx="6" fill="#11161f" stroke="${uaColor}" stroke-width="2"/>`;
+    svg += `<text x="${uaX + colW.hub / 2}" y="${uaY + 22}" text-anchor="middle" fill="#d8e0ea" font-size="12" font-weight="600">OPC UA Server</text>`;
+    svg += `<text x="${uaX + colW.hub / 2}" y="${uaY + 40}" text-anchor="middle" fill="#6b7689" font-size="10">Namespace 2</text>`;
+    svg += `</g>`;
+
+    mappings.forEach(tag => {
+        const sid = tag.sourceId || tag.SourceId || 'default';
+        const itemId = tag.daItemId || tag.DaItemId || '';
+        const pos = tagPositions.get(tagKey(sid, itemId));
+        if (!pos) return;
+        const tagStatus = getTagStatus(tag);
+        const tagColor = getStatusColor(tagStatus);
+        svg += drawEdge(pos.right, pos.cy, uaX, uaY + 28, tagStatus, tagColor);
+    });
+
+    // MQTT hub + wires for every mapped tag (grey when MQTT disabled)
+    const brokerStatus = mqttBrokerStatus();
+    const brokerColor = getStatusColor(brokerStatus);
+    const mqttY = uaY + 100;
+    const mqttEnabledCount = mappings.filter(isMqttEnabled).length;
+    svg += `<g class="diag-node">`;
+    svg += `<rect x="${mqttX}" y="${mqttY}" width="${colW.hub}" height="56" rx="6" fill="#11161f" stroke="${brokerColor}" stroke-width="2"/>`;
+    svg += `<text x="${mqttX + colW.hub / 2}" y="${mqttY + 22}" text-anchor="middle" fill="#d8e0ea" font-size="12" font-weight="600">MQTT Broker</text>`;
+    svg += `<text x="${mqttX + colW.hub / 2}" y="${mqttY + 40}" text-anchor="middle" fill="#6b7689" font-size="10">${mqttEnabledCount}/${mappings.length} enabled</text>`;
+    svg += `</g>`;
+
+    mappings.forEach(tag => {
+        const sid = tag.sourceId || tag.SourceId || 'default';
+        const itemId = tag.daItemId || tag.DaItemId || '';
+        const pos = tagPositions.get(tagKey(sid, itemId));
+        if (!pos) return;
+        const mqttOn = isMqttEnabled(tag);
+        const tagStatus = getTagStatus(tag);
+        let edgeStatus = 'off';
+        if (mqttOn) {
+            if (brokerStatus === 'good' && (tagStatus === 'good' || tagStatus === 'warn')) edgeStatus = tagStatus;
+            else if (brokerStatus === 'good') edgeStatus = 'warn';
+        }
+        const edgeColor = getStatusColor(edgeStatus);
+        svg += drawEdge(pos.right, pos.cy, mqttX, mqttY + 28, edgeStatus, edgeColor);
+    });
+
+    // legend notes
+    svg += `<text x="${sourceX}" y="${maxY + 40}" fill="#6b7689" font-size="10">Grey = inactive · Color = live · Curves = DA→DA provider→consumer</text>`;
+
+    return { svg, maxHeight: Math.max(maxY, mqttY + 56) + 70, maxWidth: 1220 };
+}
+
+function renderDaUaDiagram() {
+    const mappings = state.mappings || [];
+    const sources = state.sources || [];
+    
+    if (mappings.length === 0) {
+        return { svg: '<text x="50%" y="50%" text-anchor="middle" fill="#6b7689" font-size="14">No tags configured</text>', maxHeight: 600 };
+    }
+    
+    // Group tags by source
+    const bySource = new Map();
+    mappings.forEach(m => {
+        const sid = m.sourceId || 'default';
+        if (!bySource.has(sid)) bySource.set(sid, []);
+        bySource.get(sid).push(m);
+    });
+    
+    const sourceCount = bySource.size;
+    const tagCount = mappings.length;
+    const startX = 80;
+    const sourceX = startX;
+    const tagX = startX + 250;
+    const uaX = startX + 500;
+    const startY = 80;
+    const sourceSpacing = 120;
+    const tagSpacing = 40;
+    
+    let svg = '';
+    let currentY = startY;
+    let maxY = startY + 50;
+    
+    // Draw sources and their tags
+    const sourcePositions = new Map();
+    const tagPositions = new Map();
+    
+    Array.from(bySource.entries()).forEach(([sourceId, tags], idx) => {
+        const sourceY = currentY;
+        sourcePositions.set(sourceId, { x: sourceX, y: sourceY });
+        
+        // Source node
+        const sourceInfo = sources.find(s => s.sourceId === sourceId);
+        const sourceName = sourceInfo?.displayName || sourceId;
+        const sourceStatus = getSourceStatus(sourceId);
+        const sourceColor = getStatusColor(sourceStatus);
+        
+        svg += `<g class="diag-node" data-source="${sourceId}">`;
+        svg += `<rect x="${sourceX}" y="${sourceY}" width="140" height="50" rx="6" fill="#11161f" stroke="${sourceColor}" stroke-width="2"/>`;
+        svg += `<text x="${sourceX + 70}" y="${sourceY + 20}" text-anchor="middle" fill="#d8e0ea" font-size="12" font-weight="600">${escapeHtml(sourceName)}</text>`;
+        svg += `<text x="${sourceX + 70}" y="${sourceY + 38}" text-anchor="middle" fill="#6b7689" font-size="10">${escapeHtml(sourceInfo?.progId || '')}</text>`;
+        svg += `</g>`;
+        
+        // Draw tags for this source
+        tags.forEach((tag, tagIdx) => {
+            const tagY = sourceY + tagIdx * tagSpacing;
+            const tagKey = `${sourceId}||${tag.daItemId}`;
+            tagPositions.set(tagKey, { x: tagX, y: tagY + 15 });
+            
+            const tagStatus = getTagStatus(tag);
+            const tagColor = getStatusColor(tagStatus);
+            const tagName = tag.daItemId.split('.').pop() || tag.daItemId;
+            
+            // Edge from source to tag
+            svg += `<path class="diag-edge ${tagStatus}" d="M ${sourceX + 140} ${sourceY + 25} L ${tagX} ${tagY + 15}" stroke="${tagColor}"/>`;
+            svg += `<path class="diag-flow ${tagStatus}" d="M ${sourceX + 140} ${sourceY + 25} L ${tagX} ${tagY + 15}" stroke="${tagColor}"/>`;
+            
+            // Tag node
+            svg += `<g class="diag-node" data-tag="${tagKey}">`;
+            svg += `<rect x="${tagX}" y="${tagY}" width="160" height="30" rx="4" fill="#11161f" stroke="${tagColor}" stroke-width="1.5"/>`;
+            svg += `<text x="${tagX + 80}" y="${tagY + 19}" text-anchor="middle" fill="#d8e0ea" font-size="11">${escapeHtml(tagName)}</text>`;
+            svg += `</g>`;
+            
+            // Edge from tag to UA
+            const uaY = startY + 25;
+            svg += `<path class="diag-edge ${tagStatus}" d="M ${tagX + 160} ${tagY + 15} L ${uaX} ${uaY}" stroke="${tagColor}"/>`;
+            svg += `<path class="diag-flow ${tagStatus}" d="M ${tagX + 160} ${tagY + 15} L ${uaX} ${uaY}" stroke="${tagColor}"/>`;
+            
+            maxY = Math.max(maxY, tagY + 30);
+        });
+        
+        currentY += Math.max(tags.length * tagSpacing, 80) + 40;
+        maxY = Math.max(maxY, currentY);
+    });
+    
+    // UA Server node — grey by default, colored when any mapped tag is live
+    const uaY = startY;
+    const anyLive = mappings.some(t => getTagStatus(t) === 'good' || getTagStatus(t) === 'warn' || getTagStatus(t) === 'bad');
+    const uaColor = anyLive ? getStatusColor(mappings.some(t => getTagStatus(t) === 'bad') ? 'bad' : (mappings.some(t => getTagStatus(t) === 'warn') ? 'warn' : 'good')) : getStatusColor('off');
+    svg += `<g class="diag-node">`;
+    svg += `<rect x="${uaX}" y="${uaY}" width="140" height="50" rx="6" fill="#11161f" stroke="${uaColor}" stroke-width="2"/>`;
+    svg += `<text x="${uaX + 70}" y="${uaY + 20}" text-anchor="middle" fill="#d8e0ea" font-size="12" font-weight="600">OPC UA Server</text>`;
+    svg += `<text x="${uaX + 70}" y="${uaY + 38}" text-anchor="middle" fill="#6b7689" font-size="10">Namespace 2</text>`;
+    svg += `</g>`;
+    
+    return { svg, maxHeight: maxY + 80 };
+}
+
+function renderDaDaDiagram() {
+    const mappings = state.mappings || [];
+    const links = collectDaLinks();
+
+    if (mappings.length === 0 && links.length === 0) {
+        return { svg: '<text x="50%" y="50%" text-anchor="middle" fill="#6b7689" font-size="14">No tags or DA-to-DA links configured</text>', maxHeight: 600 };
+    }
+
+    const tagMap = new Map();
+    mappings.forEach(m => {
+        const k = tagKey(m.sourceId || m.SourceId || 'default', m.daItemId || m.DaItemId || '');
+        tagMap.set(k, m);
+    });
+    // include link endpoints even if not currently mapped
+    links.forEach(link => {
+        if (!tagMap.has(link.providerKey)) {
+            tagMap.set(link.providerKey, {
+                sourceId: link.providerSourceId,
+                daItemId: link.providerItemId,
+                enabled: false
+            });
+        }
+        if (!tagMap.has(link.consumerKey)) {
+            tagMap.set(link.consumerKey, {
+                sourceId: link.consumerSourceId,
+                daItemId: link.consumerItemId,
+                enabled: false
+            });
+        }
+    });
+
+    // Prefer two columns: providers left, consumers right when links exist; else grid of all tags
+    const providerKeys = new Set(links.map(l => l.providerKey));
+    const consumerKeys = new Set(links.map(l => l.consumerKey));
+    const allKeys = Array.from(tagMap.keys());
+
+    let svg = '';
+    svg += `<text x="40" y="34" fill="#6b7689" font-size="11" font-weight="600">DA TO DA</text>`;
+    svg += `<text x="40" y="50" fill="#6b7689" font-size="10">${links.length} link(s) · ${allKeys.length} tag node(s) · curves = provider → consumer</text>`;
+
+    const nodePositions = new Map();
+    const startY = 80;
+    const leftX = 80;
+    const rightX = 520;
+    const rowH = 48;
+    let maxY = startY;
+
+    if (links.length > 0) {
+        // left = unique providers (+ unlinked tags under them), right = consumers
+        const leftKeys = [];
+        const rightKeys = [];
+        const used = new Set();
+        providerKeys.forEach(k => { leftKeys.push(k); used.add(k); });
+        consumerKeys.forEach(k => { rightKeys.push(k); used.add(k); });
+        allKeys.forEach(k => { if (!used.has(k)) leftKeys.push(k); });
+
+        leftKeys.forEach((k, i) => {
+            const y = startY + i * rowH;
+            nodePositions.set(k, { x: leftX, y, cx: leftX + 80, cy: y + 15, role: providerKeys.has(k) ? 'provider' : 'tag' });
+            maxY = Math.max(maxY, y + 30);
+        });
+        rightKeys.forEach((k, i) => {
+            // if already placed on left (provider also consumer), keep left and also add right clone label via offset
+            const y = startY + i * rowH;
+            if (nodePositions.has(k) && providerKeys.has(k) && consumerKeys.has(k)) {
+                // dual role: keep left position for provider end; store consumer attach point
+                const left = nodePositions.get(k);
+                nodePositions.set(k + '::consumer', { x: rightX, y, cx: rightX + 80, cy: y + 15, role: 'consumer', aliasOf: k });
+            } else {
+                nodePositions.set(k, { x: rightX, y, cx: rightX + 80, cy: y + 15, role: 'consumer' });
+            }
+            maxY = Math.max(maxY, y + 30);
+        });
+
+        // edges first
+        links.forEach((link, i) => {
+            const from = nodePositions.get(link.providerKey);
+            const to = nodePositions.get(link.consumerKey + '::consumer') || nodePositions.get(link.consumerKey);
+            if (!from || !to) return;
+            const status = link.enabled === false ? 'off' : getLinkStatus(link);
+            const color = getStatusColor(status);
+            const lift = 24 + (i % 6) * 8;
+            svg += drawCurve(from.x + 160, from.cy, to.x, to.cy, status, color, lift);
+            svg += `<text x="${(from.x + to.x + 160) / 2}" y="${Math.min(from.cy, to.cy) - lift + 4}" text-anchor="middle" fill="#6b7689" font-size="9">${escapeHtml(link._kind === 'legacy' ? 'legacy' : 'link')}</text>`;
+        });
+    } else {
+        // no links yet — still show full tag mesh so tab is never empty
+        const cols = 3;
+        const colW = 220;
+        allKeys.forEach((k, i) => {
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            const x = 80 + col * colW;
+            const y = startY + row * rowH;
+            nodePositions.set(k, { x, y, cx: x + 80, cy: y + 15, role: 'tag' });
+            maxY = Math.max(maxY, y + 30);
+        });
+        svg += `<text x="40" y="${maxY + 36}" fill="#6b7689" font-size="11">No DA links yet — create provider→consumer links on the Links tab. Topology of mapped tags shown grey until linked/live.</text>`;
+    }
+
+    // draw nodes
+    nodePositions.forEach((pos, key) => {
+        const realKey = pos.aliasOf || key.replace(/::consumer$/, '');
+        const tag = tagMap.get(realKey);
+        const [sid, itemId] = parseTagKey(realKey);
+        const label = tag ? tagShortName(tag) : tagShortName(itemId);
+        const role = pos.role || 'tag';
+        const status = tag ? getTagStatus(tag) : 'off';
+        const nodeColor = getStatusColor(status);
+        const roleLabel = role === 'provider' ? 'P' : (role === 'consumer' ? 'C' : '');
+        svg += `<g class="diag-node" data-tag="${escapeHtml(realKey)}">`;
+        svg += `<rect x="${pos.x}" y="${pos.y}" width="160" height="30" rx="4" fill="#11161f" stroke="${nodeColor}" stroke-width="1.5"/>`;
+        svg += `<text x="${pos.x + 80}" y="${pos.y + 19}" text-anchor="middle" fill="#d8e0ea" font-size="11">${escapeHtml(label)}${roleLabel ? ' · ' + roleLabel : ''}</text>`;
+        svg += `</g>`;
+        if (sid && sid !== 'default') {
+            svg += `<text x="${pos.x + 80}" y="${pos.y + 42}" text-anchor="middle" fill="#6b7689" font-size="9">${escapeHtml(sid)}</text>`;
+            maxY = Math.max(maxY, pos.y + 48);
+        }
+    });
+
+    if (links.length > 0) {
+        svg += `<text x="40" y="${maxY + 36}" fill="#6b7689" font-size="10">P = provider · C = consumer · grey = inactive · color = live</text>`;
+    }
+
+    return { svg, maxHeight: maxY + 70 };
+}
+
+function renderMqttDiagram() {
+    const mappings = state.mappings || [];
+    // Always show full tag topology → MQTT. Enabled tags color when live; others stay grey.
+    const tags = mappings.slice();
+
+    if (tags.length === 0) {
+        return { svg: '<text x="50%" y="50%" text-anchor="middle" fill="#6b7689" font-size="14">No mapped tags</text>', maxHeight: 600 };
+    }
+
+    let svg = '';
+    const startX = 60;
+    const startY = 80;
+    const tagSpacing = 42;
+    const brokerX = 560;
+    const brokerW = 180;
+    const enabledCount = tags.filter(isMqttEnabled).length;
+    const brokerStatus = mqttBrokerStatus();
+    const brokerColor = getStatusColor(brokerStatus);
+    const brokerY = Math.max(startY, startY + Math.max(0, (tags.length - 1) * tagSpacing) / 2 - 10);
+    let maxY = brokerY + 70;
+
+    svg += `<text x="40" y="34" fill="#6b7689" font-size="11" font-weight="600">MQTT</text>`;
+    svg += `<text x="40" y="50" fill="#6b7689" font-size="10">${enabledCount}/${tags.length} MQTT-enabled · broker ${escapeHtml(state.mqttConnectionState || el('mqttState')?.textContent || 'unknown')}</text>`;
+
+    // broker hub
+    svg += `<g class="diag-node">`;
+    svg += `<rect x="${brokerX}" y="${brokerY}" width="${brokerW}" height="64" rx="8" fill="#11161f" stroke="${brokerColor}" stroke-width="2"/>`;
+    svg += `<text x="${brokerX + brokerW / 2}" y="${brokerY + 24}" text-anchor="middle" fill="#d8e0ea" font-size="13" font-weight="600">MQTT Broker</text>`;
+    svg += `<text x="${brokerX + brokerW / 2}" y="${brokerY + 44}" text-anchor="middle" fill="#6b7689" font-size="10">${enabledCount} publish tag(s)</text>`;
+    svg += `</g>`;
+
+    tags.forEach((tag, idx) => {
+        const tagY = startY + idx * tagSpacing;
+        const tagX = startX;
+        const sid = tag.sourceId || tag.SourceId || 'default';
+        const itemId = tag.daItemId || tag.DaItemId || '';
+        const tKey = tagKey(sid, itemId);
+        const mqttOn = isMqttEnabled(tag);
+        const live = getTagStatus(tag);
+        // node: live color if enabled; otherwise grey (topology still drawn)
+        const nodeStatus = mqttOn ? live : 'off';
+        const nodeColor = getStatusColor(nodeStatus);
+        const tagName = tagShortName(tag);
+        const topic = tag.mqttTopic || tag.MqttTopic || '';
+
+        svg += `<g class="diag-node" data-tag="${escapeHtml(tKey)}">`;
+        svg += `<rect x="${tagX}" y="${tagY}" width="220" height="34" rx="4" fill="#11161f" stroke="${nodeColor}" stroke-width="1.5"/>`;
+        svg += `<text x="${tagX + 110}" y="${tagY + 14}" text-anchor="middle" fill="#d8e0ea" font-size="11">${escapeHtml(tagName)}</text>`;
+        svg += `<text x="${tagX + 110}" y="${tagY + 27}" text-anchor="middle" fill="#6b7689" font-size="9">${mqttOn ? ('MQTT ON' + (topic ? ' · ' + escapeHtml(topic) : '')) : 'MQTT off'}</text>`;
+        svg += `</g>`;
+
+        // edge: active only when MQTT enabled AND (broker connected + tag live/good/warn)
+        let edgeStatus = 'off';
+        if (mqttOn) {
+            if (brokerStatus === 'good' && (live === 'good' || live === 'warn')) edgeStatus = live;
+            else if (brokerStatus === 'good') edgeStatus = 'warn';
+            else edgeStatus = 'off';
+        }
+        const edgeColor = getStatusColor(edgeStatus);
+        svg += drawEdge(tagX + 220, tagY + 17, brokerX, brokerY + 32, edgeStatus, edgeColor);
+
+        maxY = Math.max(maxY, tagY + 34, brokerY + 64);
+    });
+
+    svg += `<text x="40" y="${maxY + 30}" fill="#6b7689" font-size="10">All mapped tags shown · grey = MQTT disabled/inactive · color = enabled + live path</text>`;
+    return { svg, maxHeight: maxY + 60 };
+}
+
+function getSourceStatus(sourceId) {
+    // Always show topology. Grey when inactive; color only when live/active.
+    const source = (state.sources || []).find(s => (s.sourceId || s.SourceId) === sourceId);
+    if (!source) return 'off';
+    const cs = String(source.connectionState || source.ConnectionState || '').toLowerCase();
+    if (cs === 'connected') return 'good';
+    if (cs === 'connecting' || cs === 'partial') return 'warn';
+    if (cs === 'faulted' || cs === 'error') return 'bad';
+    return 'off';
+}
+
+function getTagStatus(tag) {
+    // Default greyed-out topology. Color only when tag is enabled and live.
+    if (!tag || (tag.enabled ?? tag.Enabled) === false) return 'off';
+
+    const sid = tag.sourceId || tag.SourceId || 'default';
+    const itemId = tag.daItemId || tag.DaItemId || '';
+    const value = state.valuesByKey.get(valueKey(sid, itemId));
+    if (!value) return 'off';
+
+    const isGood = value.isGood === true || value.IsGood === true;
+    const timestamp = new Date(value.timestampUtc || value.TimestampUtc || 0);
+    const age = Date.now() - timestamp.getTime();
+    const pollRate = Number(tag.pollRateMs || tag.PollRateMs || 1000) || 1000;
+
+    if (!isGood) return 'bad';
+    if (!Number.isFinite(age) || age > pollRate * 2) return 'warn';
+    return 'good';
+}
+
+function getLinkStatus(link) {
+    const ep = linkEndpoints(link);
+    if ((link.enabled ?? link.Enabled) === false) return 'off';
+    const provider = (state.mappings || []).find(m =>
+        tagKey(m.sourceId || m.SourceId || 'default', m.daItemId || m.DaItemId || '') === ep.providerKey);
+    if (!provider) return 'off';
+    return getTagStatus(provider);
+}
+
+function getStatusColor(status) {
+    const colors = {
+        good: '#34d399',
+        warn: '#fbbf24',
+        bad: '#f87171',
+        off: '#6b7689'
+    };
+    return colors[status] || colors.off;
+}
+
+function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, c => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    }[c]));
+}
 
 function valueKey(sourceId, itemId) {
     return (sourceId || 'default') + '\u0000' + (itemId || '');
@@ -948,6 +1721,11 @@ function updateManualInputState() {
     if (name === 'help') loadHelp().catch(e => el('helpContent').innerHTML = '<span class="msg bad">✗ ' + esc(e.message) + '</span>');
         if (name === 'mqtt') { await loadMqtt(); await loadMqttValues(); }
     if (name === 'links') loadDaLinks().catch(e => el('linksMessage').textContent = '✗ ' + e.message);
+    if (name === 'diagram') {
+        state.diagramLoaded = true;
+        await Promise.all([loadSources(), loadMappings(), loadDaLinks(), loadMqtt().catch(() => {})]);
+        renderDiagram();
+    }
 }
 function badge(t, c) { return `<span class="badge ${c}">${esc(t)}</span>`; }
 function stateClass(v) {
@@ -1301,6 +2079,9 @@ async function refresh() {
         state.updateRateMs = updateRateMs;
         state.valuesByKey = new Map(vs.map(v => [valueKey(get(v, 'sourceId') || 'default', get(v, 'daItemId')), v]));
         updateFaceplateLiveValues();
+        if (state.diagramLoaded && document.querySelector('.tabbtn.active')?.dataset.tab === 'diagram') {
+            renderDiagram();
+        }
         el('updateRate').textContent = updateRateMs + ' ms';
         el('pollUtilizationFill').style.width = pollUtilization.width;
         el('pollUtilizationFill').className = pollUtilization.className;
@@ -1453,24 +2234,27 @@ async function loadMappings() {
 async function loadMqtt() {
     try {
         const cfg = await (await fetch('/api/mqtt/config', { cache: 'no-store' })).json();
-        el('mqttEnabled').checked = !!cfg.enabled;
-        el('mqttBrokerUrl').value = cfg.brokerUrl || '';
-        el('mqttClientId').value = cfg.clientId || '';
-        el('mqttUser').value = cfg.userName || '';
-        el('mqttPass').value = cfg.password || '';
-        el('mqttTls').checked = !!cfg.tls;
-        el('mqttIgnoreCert').checked = !!cfg.ignoreCertErrors;
-        el('mqttPrefix').value = cfg.topicPrefix || 'bridge/tags';
-        el('mqttFields').value = cfg.payloadFields || 'Value, Timestamp';
+        if (el('mqttEnabled')) el('mqttEnabled').checked = !!cfg.enabled;
+        if (el('mqttBrokerUrl')) el('mqttBrokerUrl').value = cfg.brokerUrl || '';
+        if (el('mqttClientId')) el('mqttClientId').value = cfg.clientId || '';
+        if (el('mqttUser')) el('mqttUser').value = cfg.userName || '';
+        if (el('mqttPass')) el('mqttPass').value = cfg.password || '';
+        if (el('mqttTls')) el('mqttTls').checked = !!cfg.tls;
+        if (el('mqttIgnoreCert')) el('mqttIgnoreCert').checked = !!cfg.ignoreCertErrors;
+        if (el('mqttPrefix')) el('mqttPrefix').value = cfg.topicPrefix || 'bridge/tags';
+        if (el('mqttFields')) el('mqttFields').value = cfg.payloadFields || 'Value, Timestamp';
         const st = await (await fetch('/api/mqtt/status', { cache: 'no-store' })).json();
-        el('mqttState').textContent = st.state || 'Disconnected';
-        el('mqttState').className = 'v ' + (st.state === 'Connected' ? 'badge good' : 'badge bad');
-        el('mqttLastError').textContent = st.lastError || 'No errors';
-        el('mqttPublished').textContent = (st.publishedCount || 0).toLocaleString();
-        el('mqttReceived').textContent = (st.receivedCount || 0).toLocaleString();
-        el('mqttPublishedRate').textContent = (st.publishedRate || 0).toFixed(1) + '/s';
-        el('mqttReceivedRate').textContent = (st.receivedRate || 0).toFixed(1) + '/s';
-    } catch (e) { el('mqttMessage').textContent = '✗ ' + e.message; }
+        state.mqttConnectionState = st.state || 'Disconnected';
+        if (el('mqttState')) {
+            el('mqttState').textContent = st.state || 'Disconnected';
+            el('mqttState').className = 'v ' + (st.state === 'Connected' ? 'badge good' : 'badge bad');
+        }
+        if (el('mqttLastError')) el('mqttLastError').textContent = st.lastError || 'No errors';
+        if (el('mqttPublished')) el('mqttPublished').textContent = (st.publishedCount || 0).toLocaleString();
+        if (el('mqttReceived')) el('mqttReceived').textContent = (st.receivedCount || 0).toLocaleString();
+        if (el('mqttPublishedRate')) el('mqttPublishedRate').textContent = (st.publishedRate || 0).toFixed(1) + '/s';
+        if (el('mqttReceivedRate')) el('mqttReceivedRate').textContent = (st.receivedRate || 0).toFixed(1) + '/s';
+    } catch (e) { if (el('mqttMessage')) el('mqttMessage').textContent = '✗ ' + e.message; }
 }
 async function saveMqtt() {
     const body = {
