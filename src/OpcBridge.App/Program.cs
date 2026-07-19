@@ -44,7 +44,12 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<BridgeWorker>());
 WebApplication app = builder.Build();
 TryMigrateLegacyDaLinks(app);
 
-app.MapGet("/", () => Results.Bytes(System.Text.Encoding.UTF8.GetBytes(DashboardPage.FullHtml), "text/html; charset=utf-8"));
+app.MapGet("/", (HttpContext ctx) => {
+    ctx.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+    ctx.Response.Headers["Pragma"] = "no-cache";
+    ctx.Response.Headers["Expires"] = "0";
+    return Results.Bytes(System.Text.Encoding.UTF8.GetBytes(DashboardPage.FullHtml), "text/html; charset=utf-8");
+});
 app.MapGet("/api/values", (BridgeState state) => Results.Json(new { values = state.GetValues() }));
  app.MapGet("/api/status", (BridgeState state, UaServerHost uaServer, BridgeAppDiscovery discovery) => Results.Json(new
  {
