@@ -743,26 +743,33 @@ internal static class DashboardPage
         <div class="box">
             <div class="box-h">MQTT Broker <span class="info" data-tip="This app connects TO an external MQTT broker (like Mosquitto, HiveMQ, or AWS IoT). It does NOT include its own broker. Configure your broker connection here. Settings are saved to mqtt.json.">i</span></div>
             <div class="box-b">
-                <div class="field"><label class="fl">Enabled <span class="info" data-tip="Turn ON to connect to your MQTT broker. The app will publish tag values and receive messages. Turn OFF to disconnect. You need an external MQTT broker running (the app doesn't include one).">i</span></label><input type="checkbox" id="mqttEnabled"></div>
-                <div class="field"><label class="fl">Broker URL <span class="info" data-tip="Your MQTT broker address. Use tcp:// for plain connection or mqtts:// for encrypted. Example: tcp://192.168.1.100:1883 or mqtts://broker.hivemq.com:8883">i</span></label><input type="text" id="mqttBrokerUrl" placeholder="tcp://localhost:1883"></div>
-                <div class="field"><label class="fl">Client ID <span class="info" data-tip="Unique name for this bridge connection. Your broker uses this to identify the app. Keep the default or change it if running multiple bridges.">i</span></label><input type="text" id="mqttClientId"></div>
-                <div class="field"><label class="fl">Username <span class="info" data-tip="Username for broker authentication. Leave empty if your broker doesn't require login.">i</span></label><input type="text" id="mqttUser"></div>
-                <div class="field"><label class="fl">Password <span class="info" data-tip="Password for broker authentication. Leave empty if your broker doesn't require login. Stored in mqtt.json file.">i</span></label><input type="password" id="mqttPass"></div>
-                <div class="field"><label class="fl">TLS <span class="info" data-tip="Enable encrypted connection to broker. Use this when your broker URL starts with mqtts:// (usually port 8883).">i</span></label><input type="checkbox" id="mqttTls"></div>
-                <div class="field"><label class="fl">Ignore Cert <span class="info" data-tip="Skip broker certificate check. Only use for testing with self-signed certificates. NOT recommended for production.">i</span></label><input type="checkbox" id="mqttIgnoreCert"></div>
-                <div class="field"><label class="fl">Topic Prefix <span class="info" data-tip="Prefix for all topics, e.g. bridge/tags. Publish topic = {prefix}/{sourceId}/{daItemId}; subscribe filter = {prefix}/#. A per-tag override topic can be set in the tag faceplate.">i</span></label><input type="text" id="mqttPrefix" placeholder="bridge/tags"></div>
-                <div class="field"><label class="fl">Payload Fields <span class="info" data-tip="Which fields are included in each published JSON payload. Default {v,t} = value + timestamp. Quality/SourceId/ItemId/DisplayName/DataType add more context.">i</span></label>
-                    <select id="mqttFields">
-                        <option>Value, Timestamp</option>
-                        <option>Value, Timestamp, Quality</option>
-                        <option>Value, Timestamp, Quality, SourceId, ItemId</option>
-                        <option>Value, Timestamp, SourceId, ItemId, DisplayName, DataType</option>
-                    </select>
+                <div class="conn-section">
+                    <div class="conn-section-h">Configuration <span class="info" data-tip="Settings saved to mqtt.json. These define HOW the bridge connects to the broker. Changes here do not take effect until you click 'Save Config', and only apply to future connections — they do not connect or disconnect the broker live.">i</span></div>
+                    <div class="field"><label class="fl" for="mqttEnabled">Auto-connect</label><span class="info" data-tip="When ON, the bridge connects to the broker automatically on app startup. When OFF, it starts disconnected. To connect or disconnect right now, use the 'Live Connection' buttons below.">i</span><input type="checkbox" id="mqttEnabled"></div>
+                    <div class="field"><label class="fl" for="mqttBrokerUrl">Broker URL</label><span class="info" data-tip="Your MQTT broker address. Use tcp:// for plain connection or mqtts:// for encrypted. Example: tcp://192.168.1.100:1883 or mqtts://broker.hivemq.com:8883">i</span><input type="text" id="mqttBrokerUrl" placeholder="tcp://localhost:1883"></div>
+                    <div class="field"><label class="fl" for="mqttClientId">Client ID</label><span class="info" data-tip="Unique name for this bridge connection. Your broker uses this to identify the app. Keep the default or change it if running multiple bridges.">i</span><input type="text" id="mqttClientId"></div>
+                    <div class="field"><label class="fl" for="mqttUser">Username</label><span class="info" data-tip="Username for broker authentication. Leave empty if your broker doesn't require login.">i</span><input type="text" id="mqttUser"></div>
+                    <div class="field"><label class="fl" for="mqttPass">Password</label><span class="info" data-tip="Password for broker authentication. Leave empty if your broker doesn't require login. Stored in mqtt.json file.">i</span><input type="password" id="mqttPass"></div>
+                    <div class="field"><label class="fl" for="mqttTls">TLS</label><span class="info" data-tip="Enable encrypted connection to broker. Use this when your broker URL starts with mqtts:// (usually port 8883).">i</span><input type="checkbox" id="mqttTls"></div>
+                    <div class="field"><label class="fl" for="mqttIgnoreCert">Ignore Cert</label><span class="info" data-tip="Skip broker certificate check. Only use for testing with self-signed certificates. NOT recommended for production.">i</span><input type="checkbox" id="mqttIgnoreCert"></div>
+                    <div class="field"><label class="fl" for="mqttPrefix">Topic Prefix</label><span class="info" data-tip="Prefix for all topics, e.g. bridge/tags. Publish topic = {prefix}/{sourceId}/{daItemId}; subscribe filter = {prefix}/#. A per-tag override topic can be set in the tag faceplate.">i</span><input type="text" id="mqttPrefix" placeholder="bridge/tags"></div>
+                    <div class="field"><label class="fl" for="mqttFields">Payload Fields</label><span class="info" data-tip="Which fields are included in each published JSON payload. Default {v,t} = value + timestamp. Quality/SourceId/ItemId/DisplayName/DataType add more context.">i</span>
+                        <select id="mqttFields">
+                            <option>Value, Timestamp</option>
+                            <option>Value, Timestamp, Quality</option>
+                            <option>Value, Timestamp, Quality, SourceId, ItemId</option>
+                            <option>Value, Timestamp, SourceId, ItemId, DisplayName, DataType</option>
+                        </select>
+                    </div>
+                    <div class="field"><button class="btn" onclick="saveMqtt()">Save Config</button><span class="msg">persists to mqtt.json (applies on next connect)</span></div>
                 </div>
-                <div class="field">
-                    <button class="btn" onclick="saveMqtt()">Save Config</button>
-                    <button class="btn ghost" onclick="connectMqtt()">Connect</button>
-                    <button class="btn ghost" onclick="disconnectMqtt()">Disconnect</button>
+                <div class="conn-section">
+                    <div class="conn-section-h">Live Connection <span class="info" data-tip="Manual control of the broker connection right now. 'Connect' opens a connection using the saved config; 'Disconnect' closes it. These do NOT change the saved 'Auto-connect' setting.">i</span></div>
+                    <div class="field">
+                        <button class="btn ghost" onclick="connectMqtt()">Connect</button>
+                        <button class="btn ghost" onclick="disconnectMqtt()">Disconnect</button>
+                        <span class="msg">applies immediately</span>
+                    </div>
                 </div>
                 <div class="msg" id="mqttMessage"></div>
             </div>
@@ -2231,7 +2238,7 @@ async function loadMappings() {
     el('mappedList').innerHTML = renderMappingRows(view);
     if (document.getElementById('view-links')?.classList.contains('active')) renderLinksView();
 }
-async function loadMqtt() {
+async function loadMqttConfig() {
     try {
         const cfg = await (await fetch('/api/mqtt/config', { cache: 'no-store' })).json();
         if (el('mqttEnabled')) el('mqttEnabled').checked = !!cfg.enabled;
@@ -2243,6 +2250,10 @@ async function loadMqtt() {
         if (el('mqttIgnoreCert')) el('mqttIgnoreCert').checked = !!cfg.ignoreCertErrors;
         if (el('mqttPrefix')) el('mqttPrefix').value = cfg.topicPrefix || 'bridge/tags';
         if (el('mqttFields')) el('mqttFields').value = cfg.payloadFields || 'Value, Timestamp';
+    } catch (e) { /* ignore */ }
+}
+async function loadMqttStatus() {
+    try {
         const st = await (await fetch('/api/mqtt/status', { cache: 'no-store' })).json();
         state.mqttConnectionState = st.state || 'Disconnected';
         if (el('mqttState')) {
@@ -2256,6 +2267,7 @@ async function loadMqtt() {
         if (el('mqttReceivedRate')) el('mqttReceivedRate').textContent = (st.receivedRate || 0).toFixed(1) + '/s';
     } catch (e) { if (el('mqttMessage')) el('mqttMessage').textContent = '✗ ' + e.message; }
 }
+async function loadMqtt() { await Promise.all([loadMqttConfig(), loadMqttStatus()]); }
 async function saveMqtt() {
     const body = {
         enabled: el('mqttEnabled').checked,
@@ -2920,7 +2932,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setInterval(() => { if (diagnosticsActive) loadDiagnostics().catch(() => {}); }, 2000);
     setInterval(() => {
         if (!document.querySelector('#view-mqtt.active')) return;
-        loadMqtt().catch(() => {});
+        loadMqttStatus().catch(() => {});
         if (el('mqttValAuto')?.checked) loadMqttValues().catch(() => {});
     }, 2000);
     if (initTab === 'logs') await loadLogs();
