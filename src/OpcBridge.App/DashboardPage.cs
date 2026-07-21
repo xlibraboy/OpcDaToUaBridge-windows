@@ -2236,7 +2236,30 @@ async function loadMappings() {
     state.mappings = mappings;
     const view = applyMappingView(mappings);
     el('mappedList').innerHTML = renderMappingRows(view);
+    if (el('mapCount')) el('mapCount').textContent = view.length + (view.length !== mappings.length ? ' / ' + mappings.length + ' mappings' : ' mappings');
+    refreshTagBrowserMappedBadges();
     if (document.getElementById('view-links')?.classList.contains('active')) renderLinksView();
+}
+function refreshTagBrowserMappedBadges() {
+    const tree = el('tagTree');
+    if (!tree) return;
+    const mappedKeys = new Set((state.mappings || []).map(m => valueKey(m.sourceId || m.SourceId || 'default', m.daItemId || m.DaItemId)));
+    tree.querySelectorAll('button[data-action="add-tag"]').forEach(button => {
+        const sourceId = button.dataset.sourceId || '';
+        const itemId = button.dataset.itemId || '';
+        const actions = button.closest('.li-actions');
+        if (!actions) return;
+        const isMapped = mappedKeys.has(valueKey(sourceId, itemId));
+        let badge = actions.querySelector('.mapped-badge');
+        if (isMapped && !badge) {
+            badge = document.createElement('span');
+            badge.className = 'mapped-badge';
+            badge.textContent = 'Mapped';
+            actions.insertBefore(badge, button);
+        } else if (!isMapped && badge) {
+            badge.remove();
+        }
+    });
 }
 async function loadMqttConfig() {
     try {
