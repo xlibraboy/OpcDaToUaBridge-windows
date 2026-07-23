@@ -40,3 +40,6 @@ mappings.json
 
 # Subagent-driven development worktrees
 .worktrees/
+#Avalonia build task cache
+.avalonia-build-tasks/
+**/.avalonia-build-tasks/

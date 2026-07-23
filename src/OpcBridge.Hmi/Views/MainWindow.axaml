@@ -1,0 +1,7 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="OpcBridge.Hmi.Views.MainWindow"
+        Title="OpcBridge HMI"
+        Width="1100" Height="700">
+  <TextBlock Margin="16" Text="OpcBridge HMI scaffold" />
+</Window>
