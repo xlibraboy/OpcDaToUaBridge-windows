@@ -123,8 +123,8 @@ Topology views under **Diagram** (SVG canvas, live status colors):
 |---|---|---|
 | **All** | Aggregated plant overview: one row per DA source → tag-group box → UA + MQTT hubs | O(sources) nodes/trunks, not O(tags) |
 | **DA→UA** | Aggregated source trunks by default; click a tag-group to expand | Expanded detail is paged (`DIAG_EXPAND_PAGE = 80` tags/page) |
-| **DA-to-DA** | Provider/consumer topology from links + legacy provider fields | Per-endpoint for link sets |
-| **MQTT** | Mapped tags vs broker | Per-tag (still suitable for moderate counts) |
+| **DA-to-DA** | Aggregated source-pair trunks (provider source → consumer source); click count badge to expand | Expanded pair endpoints are paged (`DIAG_EXPAND_PAGE = 80`); expand keys `dada:{from}=>{to}` |
+| **MQTT** | Aggregated per-source MQTT groups → broker; click group to expand | Expanded tags paged (`DIAG_EXPAND_PAGE = 80`); expand keys `mqtt:{sourceId}` |
 
 **Zoom / pan (all sub-tabs):**
 - Toolbar: `−` / `%` / `+` / **Fit** / **Fit W** / **Reset**
@@ -137,7 +137,7 @@ Topology views under **Diagram** (SVG canvas, live status colors):
 
 **Tag Browser Mapped badge:** `loadMappings()` calls `refreshTagBrowserMappedBadges()` so Browse All Tags shows **Mapped** immediately after Add/Remove without a re-browse.
 
-**Scaling principle for 1k–10k+ tags:** aggregate → expand → focus. Never draw every tag on the overview. Collapsed DA→UA cost is ~2 nodes + 1 trunk per source.
+**Scaling principle for 1k–10k+ tags:** aggregate → expand → focus. Never draw every tag on the overview. Collapsed All/DA→UA/MQTT cost is ~2–3 nodes + 1 trunk per source; DA-to-DA cost is O(source-pairs), not O(links).
 
 ## Configuration (`appsettings.json`)
 
