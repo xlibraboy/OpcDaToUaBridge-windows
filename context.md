@@ -1,6 +1,6 @@
 # context.md — OpcDaToUaBridge
 
-Instruction file for AI agents working in this repo. All facts below are verified against committed code on `main` as of 2026-07-12.
+Instruction file for AI agents working in this repo. All facts below are verified against committed code on `main` as of 2026-07-23.
 
 ## What this project is
 
@@ -8,24 +8,25 @@ A bridge that mirrors OPC DA tag values into an OPC UA server, with a web dashbo
 
 - **DA side**: connects to one or more OPC DA servers via direct COM/DCOM interop (no vendor SDK).
 - **UA side**: an in-process OPC UA server (OPCFoundation.NetStandard SDK) that mirrors DA reads as UA variables.
-- **Dashboard**: ASP.NET Core minimal API + single-page HTML dashboard for sources, mappings, browsing, and live values.
+- **Dashboard**: ASP.NET Core minimal API + single-page HTML dashboard for sources, mappings, browsing, live values, MQTT, and Diagram topology.
 
 ## Project map
 
-Four projects under `src/`, all .NET 8, `ImplicitUsings` + `Nullable` enabled.
+Projects under `src/`, all .NET 8, `ImplicitUsings` + `Nullable` enabled.
 
 | Project | TFM | Role |
 |---|---|---|
 | `OpcBridge.Core` | `net8.0` | Cross-project contract types: `TagMapping`, `BridgeValue`, `BridgeOptions`, `QualityMapper`. No dependencies. |
 | `OpcBridge.Da` | `net8.0;net8.0-windows` | DA client + browsing + server enumeration + Windows impersonation. Multi-targeted so it compiles on Linux but only runs COM on Windows. |
 | `OpcBridge.Ua` | `net8.0` | UA server: `BridgeUaServer` (extends `StandardServer`), `BridgeNodeManager` (extends `CustomNodeManager2`), `UaServerHost`. Depends on `OPCFoundation.NetStandard.Opc.Ua` 1.5.378.145. |
-| `OpcBridge.App` | `net8.0` (Web SDK) | Entrypoint, HTTP API, dashboard HTML, `BridgeWorker` (hosted service), `BridgeState`, `MappingStore`, `DaRuntimeSettings`, `DaClientFactory`, `DashboardLogStore`. References Core, Da, Ua. |
+| `OpcBridge.Mqtt` | `net8.0` | MQTT publish/subscribe helper for mapped tags. |
+| `OpcBridge.App` | `net8.0` (Web SDK) | Entrypoint, HTTP API, dashboard HTML/JS (`DashboardPage`), `BridgeWorker`, `BridgeState`, `MappingStore`, `DaRuntimeSettings`, `DaClientFactory`, `DashboardLogStore`. References Core, Da, Ua, Mqtt. |
 
-Reference graph: `App → {Core, Da, Ua}`, `Da → Core`, `Ua → Core`. Core depends on nothing.
+Reference graph: `App → {Core, Da, Ua, Mqtt}`, `Da → Core`, `Ua → Core`, `Mqtt → Core`. Core depends on nothing.
 
 ## Key contracts (OpcBridge.Core)
 
-- **`TagMapping`** — the mapping unit. Keyed by `(SourceId, DaItemId)` (case-insensitive). Fields: `SourceId` (default `"default"`), `DaItemId`, `UaNodeId`, `DisplayName`, `DataType`, `Enabled`, `Mode` (`"Source"` | `"Manual"`), `ManualValue`, `PollRateMs`. `TagMode.Source` / `TagMode.Manual` are the constants.
+- **`TagMapping`** — the mapping unit. Keyed by `(SourceId, DaItemId)` (case-insensitive). Fields include: `SourceId` (default `"default"`), `DaItemId`, `UaNodeId`, `DisplayName`, `Description`, `DataType`, `Enabled`, `Mode` (`"Source"` | `"Manual"`), `ManualValue`, `PollRateMs`, `DeadbandPct`, `Writeable`, `AccessRights` (`Read` / `Read-Write` / `Write`), `MqttEnabled`, plus optional provider-link fields for DA→DA forwarding. `TagMode.Source` / `TagMode.Manual` are the mode constants. `AccessRights`, `Writeable`, and simulation (`Mode`/`ManualValue`) are independent concerns.
 - **`BridgeValue`** — `record(SourceId, DaItemId, Value, TimestampUtc, DaQuality, IsGood)`. The normalized data unit that crosses the DA→state→UA boundary.
 - **`BridgeOptions`** — `Mappings` (seed list) + `RateLimits` (`Dictionary<int,int>` mapping poll-rate-ms → max-tags-per-group).
 - **`QualityMapper`** — `IsGoodDaQuality(int)` used by `OpcDaClient` to set `BridgeValue.IsGood`.
@@ -108,9 +109,35 @@ Endpoints (all in `Program.cs`):
 - `POST /api/da/servers` — enumerate OPC DA servers (Windows-only, 10s timeout)
 - `POST /api/da/tags` — browse tags (Windows-only, 15s timeout)
 - `GET /api/mappings`; `POST /api/mappings/add` | `/update` | `/remove`
+- `GET /api/da-links` (and related write endpoints) — DA→DA provider/consumer links
+- MQTT config/status/values endpoints under `/api/mqtt/*`
 - `GET /health` — `{ "status": "ok" }`
 
 `DashboardLogStore` is also wired as an `ILoggerProvider` (`DashboardLogProvider`), so `ILogger` calls under the `OpcBridge.*` categories at Information+ appear in the dashboard's Logs panel.
+
+### Diagram tab (dashboard JS in `DashboardPage`)
+
+Topology views under **Diagram** (SVG canvas, live status colors):
+
+| Sub-tab | Default rendering | Scale strategy |
+|---|---|---|
+| **All** | Aggregated plant overview: one row per DA source → tag-group box → UA + MQTT hubs | O(sources) nodes/trunks, not O(tags) |
+| **DA→UA** | Aggregated source trunks by default; click a tag-group to expand | Expanded detail is paged (`DIAG_EXPAND_PAGE = 80` tags/page) |
+| **DA-to-DA** | Provider/consumer topology from links + legacy provider fields | Per-endpoint for link sets |
+| **MQTT** | Mapped tags vs broker | Per-tag (still suitable for moderate counts) |
+
+**Zoom / pan (all sub-tabs):**
+- Toolbar: `−` / `%` / `+` / **Fit** / **Fit W** / **Reset**
+- Range **25%–300%**, step 10%
+- **Ctrl+wheel** zooms toward cursor
+- Drag empty canvas to pan
+- Zoom persists across live re-render and sub-tab switch
+
+**Status colors:** grey = inactive/default topology; green/yellow/red only when live/active. Animated dashed edges indicate flow.
+
+**Tag Browser Mapped badge:** `loadMappings()` calls `refreshTagBrowserMappedBadges()` so Browse All Tags shows **Mapped** immediately after Add/Remove without a re-browse.
+
+**Scaling principle for 1k–10k+ tags:** aggregate → expand → focus. Never draw every tag on the overview. Collapsed DA→UA cost is ~2 nodes + 1 trunk per source.
 
 ## Configuration (`appsettings.json`)
 
@@ -143,14 +170,29 @@ The `C:\Program Files\dotnet\dotnet.exe` install lacks the ASP.NET shared framew
 
 ## Deploy to Windows
 
-1. On Linux: `dotnet publish -c Release -o publish` (or `-r win-x86` for 32-bit COM interop — OPC DA servers and `OpcEnum` are 32-bit COM servers).
-2. Copy `publish/` to the Windows host repo root.
-3. Run `scripts/windows/register-published-task.ps1` on the Windows host. This:
-   - Kills any running `OpcBridge.App.exe` / `dotnet.exe` for the app.
-   - Registers scheduled task `OpcDaToUaBridge` (trigger `AtStartup`, principal `S4U` + `Highest`).
-   - The task runs `start-published-bridge.cmd` → `publish\OpcBridge.App.dll` via the user-profile dotnet, redirecting stdout/stderr to `publish\bridge-task-*.log`.
-   - Probes `http://127.0.0.1:8080/health` for ~20s and reports task state + port listener.
-4. `scripts/windows/show-published-logs.ps1` tails the task logs.
+**Target host (verified):** `DESKTOP-MENOJUS` / SSH alias `xlibr-win` (`192.168.20.13`), user `xlibr`, path `C:\Users\xlibr\Documents\OpcDaToUaBridge\publish\`.
+
+**Linux publish (framework-dependent, 32-bit COM):**
+```bash
+docker run --rm -v "$PWD":/src -w /src mcr.microsoft.com/dotnet/sdk:8.0 \
+  bash -lc 'dotnet publish src/OpcBridge.App/OpcBridge.App.csproj -c Release -r win-x86 --self-contained false -o /src/publish.tmp'
+```
+Package `publish.tmp` → tar.gz, SCP to host as `publish-new.tar.gz`, then run host deploy script (backs up `appsettings.json` / `mappings.json` / `pki`, clears publish, extracts, restores runtime state, re-registers task).
+
+**Host launcher:** scheduled task `OpcDaToUaBridge` → `scripts/windows/start-published-bridge.cmd` which `pushd`s into `publish\` and runs:
+`C:\Program Files (x86)\dotnet\dotnet.exe OpcBridge.App.dll`
+(CWD must be the publish folder so `appsettings.json` resolves.)
+
+**register-published-task.ps1** kills old process, re-registers AtStartup S4U task, starts it, probes `http://127.0.0.1:8080/health`.
+
+**Deploy guards:**
+- Restore host-specific `appsettings.json` (do not ship a broken `EndpointUrl` from the build machine).
+- Preserve `mappings.json` and `pki/` across cutover.
+- Do **not** copy test platform DLLs (`Microsoft.TestPlatform.*`, `Mono.Cecil.*`, xunit, etc.) into publish.
+- Delete stale apphost / pollution before copy if the directory was previously dirtied.
+- Optional: delete `publish/pki/own/cert.der` when UA hostname/SAN must regenerate.
+
+**Git remotes:** `origin` = `OpcDaToUaBridge-linux` (HTTPS), `win` = `OpcDaToUaBridge-windows` (SSH). Push merges to both.
 
 ## Conventions
 
@@ -160,7 +202,7 @@ The `C:\Program Files\dotnet\dotnet.exe` install lacks the ASP.NET shared framew
 - **Failure-resilient by default.** Errors are surfaced in the dashboard (per-source state, `LastError`), not fatal. A failed real-mode connect must leave the app alive and recoverable.
 - **Backend-first.** Verify the backend seam (`IDaClient`, `BridgeWorker`, `BridgeState`) before wiring dashboard controls.
 - **Conventional commits** (`feat:`, `fix:`, etc.). Committed code on `main` is authoritative; uncommitted changes are a known risk.
-- **No test project.** Verification is build-clean (both platforms) + manual runtime check on the Windows host against real DA hardware + the `/health` and `/api/status` endpoints.
+- **Tests exist** under `tests/OpcBridge.LoadTest` (xUnit). Prefer `InternalsVisibleTo` over making types public for tests. Run in Docker: `dotnet test tests/OpcBridge.LoadTest/OpcBridge.LoadTest.csproj`. Primary verification remains build-clean (0w/0e) + host `/health` smoke.
 
 ## Gotchas
 

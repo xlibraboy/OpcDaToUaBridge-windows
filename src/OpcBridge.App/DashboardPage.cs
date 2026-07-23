@@ -249,6 +249,34 @@ internal static class DashboardPage
             border-color: var(--accent);
             color: var(--bg);
         }
+        .diag-zoom {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-left: 8px;
+        }
+        .diag-zoom-btn {
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            min-width: 28px;
+            height: 28px;
+            padding: 0 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1;
+        }
+        .diag-zoom-btn:hover { background: var(--border); }
+        .diag-zoom-btn:disabled { opacity: 0.4; cursor: default; }
+        .diag-zoom-label {
+            min-width: 44px;
+            text-align: center;
+            font-size: 11px;
+            color: var(--muted);
+            font-variant-numeric: tabular-nums;
+        }
         .diag-legend {
             margin-left: auto;
             display: flex;
@@ -275,9 +303,17 @@ internal static class DashboardPage
             overflow: auto;
             background: var(--bg);
             position: relative;
+            cursor: grab;
+            user-select: none;
+        }
+        .diag-canvas.panning { cursor: grabbing; }
+        .diag-zoom-host {
+            position: relative;
+            transform-origin: 0 0;
         }
         #diagSvg {
-            width: 100%;
+            display: block;
+            transform-origin: 0 0;
         }
         .diag-node {
             cursor: pointer;
@@ -808,6 +844,14 @@ internal static class DashboardPage
         <button class="diag-tab" data-diag="da-ua" onclick="showDiagTab('da-ua')">DA→UA</button>
         <button class="diag-tab" data-diag="da-da" onclick="showDiagTab('da-da')">DA to DA</button>
         <button class="diag-tab" data-diag="mqtt" onclick="showDiagTab('mqtt')">MQTT</button>
+        <div class="diag-zoom" title="Ctrl+wheel zoom toward cursor · drag canvas to pan">
+            <button type="button" class="diag-zoom-btn" id="diagZoomOut" title="Zoom out">&minus;</button>
+            <span class="diag-zoom-label" id="diagZoomLabel">100%</span>
+            <button type="button" class="diag-zoom-btn" id="diagZoomIn" title="Zoom in">+</button>
+            <button type="button" class="diag-zoom-btn" id="diagZoomFit" title="Fit entire diagram">Fit</button>
+            <button type="button" class="diag-zoom-btn" id="diagZoomFitW" title="Fit width">Fit W</button>
+            <button type="button" class="diag-zoom-btn" id="diagZoomReset" title="Reset zoom">Reset</button>
+        </div>
         <div class="diag-legend">
             <span class="legend-item"><span class="legend-dot good"></span>Good</span>
             <span class="legend-item"><span class="legend-dot warn"></span>Stale</span>
@@ -816,7 +860,9 @@ internal static class DashboardPage
         </div>
     </div>
     <div class="diag-canvas" id="diagCanvas">
-        <svg id="diagSvg" width="100%"></svg>
+        <div class="diag-zoom-host" id="diagZoomHost">
+            <svg id="diagSvg"></svg>
+        </div>
     </div>
 </div>
 </div>
@@ -868,8 +914,146 @@ const state = {
     handleHistory: [],
     handleBaseline: null,
     diagramTab: 'all',
-    diagramLoaded: false
+    diagramLoaded: false,
+    diagramZoom: 1,
+    diagramBaseWidth: 1200,
+    diagramBaseHeight: 600,
+    diagramExpandedSources: {},
+    diagramExpandPage: {}
 };
+const DIAG_ZOOM_MIN = 0.25;
+const DIAG_ZOOM_MAX = 3.0;
+const DIAG_ZOOM_STEP = 0.1;
+const DIAG_EXPAND_PAGE = 80;
+let diagPan = null;
+
+function clampDiagramZoom(z) {
+    const n = Number(z);
+    if (!Number.isFinite(n)) return 1;
+    return Math.min(DIAG_ZOOM_MAX, Math.max(DIAG_ZOOM_MIN, Math.round(n * 100) / 100));
+}
+function applyDiagramZoom() {
+    const host = el('diagZoomHost');
+    const svg = el('diagSvg');
+    const label = el('diagZoomLabel');
+    const z = clampDiagramZoom(state.diagramZoom);
+    state.diagramZoom = z;
+    const w = Math.max(1, Math.round((state.diagramBaseWidth || 1200) * z));
+    const h = Math.max(1, Math.round((state.diagramBaseHeight || 600) * z));
+    if (svg) {
+        svg.setAttribute('width', w);
+        svg.setAttribute('height', h);
+        svg.style.width = w + 'px';
+        svg.style.height = h + 'px';
+        svg.style.transform = '';
+    }
+    if (host) {
+        host.style.width = w + 'px';
+        host.style.height = h + 'px';
+        host.style.transform = '';
+    }
+    if (label) label.textContent = Math.round(z * 100) + '%';
+    const outBtn = el('diagZoomOut');
+    const inBtn = el('diagZoomIn');
+    if (outBtn) outBtn.disabled = z <= DIAG_ZOOM_MIN + 1e-9;
+    if (inBtn) inBtn.disabled = z >= DIAG_ZOOM_MAX - 1e-9;
+}
+function setDiagramZoom(next, anchor) {
+    const canvas = el('diagCanvas');
+    const prev = clampDiagramZoom(state.diagramZoom || 1);
+    const z = clampDiagramZoom(next);
+    let ax = null, ay = null, sx = 0, sy = 0;
+    if (canvas && anchor && Number.isFinite(anchor.clientX) && Number.isFinite(anchor.clientY)) {
+        const rect = canvas.getBoundingClientRect();
+        ax = anchor.clientX - rect.left;
+        ay = anchor.clientY - rect.top;
+        sx = canvas.scrollLeft;
+        sy = canvas.scrollTop;
+    }
+    state.diagramZoom = z;
+    applyDiagramZoom();
+    if (canvas && ax !== null && prev > 0) {
+        const ratio = z / prev;
+        canvas.scrollLeft = Math.max(0, (sx + ax) * ratio - ax);
+        canvas.scrollTop = Math.max(0, (sy + ay) * ratio - ay);
+    }
+}
+function nudgeDiagramZoom(delta, anchor) {
+    setDiagramZoom((state.diagramZoom || 1) + delta, anchor);
+}
+function fitDiagramZoom(mode) {
+    const canvas = el('diagCanvas');
+    if (!canvas) return;
+    const baseW = Math.max(1, state.diagramBaseWidth || 1200);
+    const baseH = Math.max(1, state.diagramBaseHeight || 600);
+    const viewW = Math.max(1, canvas.clientWidth - 16);
+    const viewH = Math.max(1, canvas.clientHeight - 16);
+    let z = viewW / baseW;
+    if (mode !== 'width') z = Math.min(z, viewH / baseH);
+    setDiagramZoom(z);
+    canvas.scrollLeft = 0;
+    canvas.scrollTop = 0;
+}
+function bindDiagramPanZoom() {
+    const canvas = el('diagCanvas');
+    if (!canvas || canvas.dataset.zoomBound === '1') return;
+    canvas.dataset.zoomBound = '1';
+    el('diagZoomIn')?.addEventListener('click', () => nudgeDiagramZoom(DIAG_ZOOM_STEP));
+    el('diagZoomOut')?.addEventListener('click', () => nudgeDiagramZoom(-DIAG_ZOOM_STEP));
+    el('diagZoomReset')?.addEventListener('click', () => setDiagramZoom(1));
+    el('diagZoomFit')?.addEventListener('click', () => fitDiagramZoom('all'));
+    el('diagZoomFitW')?.addEventListener('click', () => fitDiagramZoom('width'));
+    canvas.addEventListener('wheel', e => {
+        if (!e.ctrlKey) return;
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -DIAG_ZOOM_STEP : DIAG_ZOOM_STEP;
+        nudgeDiagramZoom(delta, { clientX: e.clientX, clientY: e.clientY });
+    }, { passive: false });
+    canvas.addEventListener('pointerdown', e => {
+        if (e.button !== 0) return;
+        if (e.target.closest('.diag-node, button, a, input, select, textarea')) return;
+        diagPan = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, sl: canvas.scrollLeft, st: canvas.scrollTop };
+        canvas.classList.add('panning');
+        try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+        e.preventDefault();
+    });
+    canvas.addEventListener('pointermove', e => {
+        if (!diagPan || e.pointerId !== diagPan.pointerId) return;
+        canvas.scrollLeft = diagPan.sl - (e.clientX - diagPan.x);
+        canvas.scrollTop = diagPan.st - (e.clientY - diagPan.y);
+    });
+    const endPan = e => {
+        if (!diagPan || (e && e.pointerId !== diagPan.pointerId)) return;
+        diagPan = null;
+        canvas.classList.remove('panning');
+    };
+    canvas.addEventListener('pointerup', endPan);
+    canvas.addEventListener('pointercancel', endPan);
+    canvas.addEventListener('click', e => {
+        const actionEl = e.target.closest('[data-diag-action]');
+        if (!actionEl) return;
+        const action = actionEl.dataset.diagAction;
+        const sourceId = actionEl.dataset.sourceId || '';
+        if (action === 'toggle-expand' && sourceId) {
+            const cur = !!state.diagramExpandedSources[sourceId];
+            if (cur) delete state.diagramExpandedSources[sourceId];
+            else {
+                state.diagramExpandedSources[sourceId] = true;
+                if (state.diagramExpandPage[sourceId] == null) state.diagramExpandPage[sourceId] = 0;
+            }
+            renderDiagram();
+            return;
+        }
+        if (action === 'expand-page' && sourceId) {
+            const dir = Number(actionEl.dataset.dir || 0);
+            const page = Number(state.diagramExpandPage[sourceId] || 0) + dir;
+            state.diagramExpandPage[sourceId] = Math.max(0, page);
+            state.diagramExpandedSources[sourceId] = true;
+            renderDiagram();
+        }
+    });
+    applyDiagramZoom();
+}
 
 function showDiagTab(tab) {
     state.diagramTab = tab;
@@ -895,19 +1079,24 @@ function renderDiagram() {
         const result = renderDaUaDiagram();
         html = result.svg;
         maxHeight = result.maxHeight;
+        maxWidth = result.maxWidth || maxWidth;
     } else if (tab === 'da-da') {
         const result = renderDaDaDiagram();
         html = result.svg;
         maxHeight = result.maxHeight;
+        maxWidth = result.maxWidth || maxWidth;
     } else if (tab === 'mqtt') {
         const result = renderMqttDiagram();
         html = result.svg;
         maxHeight = result.maxHeight;
+        maxWidth = result.maxWidth || maxWidth;
     }
 
+    state.diagramBaseWidth = maxWidth;
+    state.diagramBaseHeight = maxHeight;
     svg.setAttribute('viewBox', `0 0 ${maxWidth} ${maxHeight}`);
-    svg.setAttribute('height', maxHeight);
     svg.innerHTML = html;
+    applyDiagramZoom();
 }
 
 function linkEndpoints(link) {
@@ -989,6 +1178,25 @@ function isMqttEnabled(tag) {
     return (tag.mqttEnabled ?? tag.MqttEnabled) === true;
 }
 
+function worstStatus(a, b) {
+    const rank = { bad: 3, warn: 2, good: 1, off: 0 };
+    return (rank[a] || 0) >= (rank[b] || 0) ? a : b;
+}
+function summarizeTags(tags) {
+    let good = 0, warn = 0, bad = 0, off = 0, mqtt = 0, enabled = 0;
+    let flow = 'off';
+    (tags || []).forEach(tag => {
+        const st = getTagStatus(tag);
+        if (st === 'good') good++;
+        else if (st === 'warn') warn++;
+        else if (st === 'bad') bad++;
+        else off++;
+        if ((tag.enabled ?? tag.Enabled) !== false) enabled++;
+        if (isMqttEnabled(tag)) mqtt++;
+        flow = worstStatus(flow, st);
+    });
+    return { total: (tags || []).length, good, warn, bad, off, mqtt, enabled, flow };
+}
 function renderAllDiagram() {
     const mappings = state.mappings || [];
     const sources = state.sources || [];
@@ -998,15 +1206,15 @@ function renderAllDiagram() {
         return { svg: '<text x="50%" y="50%" text-anchor="middle" fill="#6b7689" font-size="14">No sources or tags configured</text>', maxHeight: 600, maxWidth: 1400 };
     }
 
-    // Columns: DA sources | tags | UA | MQTT
+    // Aggregated overview: source → tag-group → UA/MQTT (O(sources), not O(tags))
     const sourceX = 40;
-    const tagX = 280;
-    const uaX = 700;
+    const groupX = 300;
+    const uaX = 720;
     const mqttX = 1000;
-    const colW = { source: 180, tag: 200, hub: 160 };
+    const colW = { source: 200, group: 260, hub: 170 };
     const startY = 70;
-    const tagSpacing = 36;
-    const sourceGap = 28;
+    const rowH = 84;
+    const sourceGap = 22;
 
     const bySource = new Map();
     mappings.forEach(m => {
@@ -1014,234 +1222,317 @@ function renderAllDiagram() {
         if (!bySource.has(sid)) bySource.set(sid, []);
         bySource.get(sid).push(m);
     });
-    // include sources with zero tags so full app topology is visible
     sources.forEach(s => {
         const sid = s.sourceId || s.SourceId || 'default';
         if (!bySource.has(sid)) bySource.set(sid, []);
     });
 
     let svg = '';
-    svg += `<text x="40" y="34" fill="#6b7689" font-size="11" font-weight="600">FULL INTERCONNECTION</text>`;
-    svg += `<text x="40" y="50" fill="#6b7689" font-size="10">DA sources → tags → UA · DA-to-DA links · MQTT</text>`;
+    svg += `<text x="40" y="30" fill="#6b7689" font-size="11" font-weight="600">PLANT OVERVIEW (aggregated)</text>`;
+    svg += `<text x="40" y="48" fill="#6b7689" font-size="10">Sources → tag groups → UA / MQTT · trunks colored by live status · detail on DA→UA / DA-to-DA / MQTT tabs</text>`;
 
     const sourcePositions = new Map();
-    const tagPositions = new Map();
+    const groupPositions = new Map();
+    const summaries = new Map();
     let currentY = startY;
     let maxY = startY;
+    let totalTags = 0;
+    let totalMqtt = 0;
+    let overallFlow = 'off';
 
     Array.from(bySource.entries()).forEach(([sourceId, tags]) => {
         const sourceInfo = sources.find(s => (s.sourceId || s.SourceId) === sourceId);
         const sourceName = sourceInfo?.displayName || sourceInfo?.DisplayName || sourceId;
         const sourceStatus = getSourceStatus(sourceId);
         const sourceColor = getStatusColor(sourceStatus);
-        const blockH = Math.max(tags.length * tagSpacing, 50);
-        const sourceY = currentY + Math.max(0, (blockH - 50) / 2);
-        sourcePositions.set(sourceId, { x: sourceX, y: sourceY, cy: sourceY + 25 });
+        const summary = summarizeTags(tags);
+        summaries.set(sourceId, summary);
+        totalTags += summary.total;
+        totalMqtt += summary.mqtt;
+        overallFlow = worstStatus(overallFlow, summary.flow);
+
+        const sourceY = currentY;
+        const cy = sourceY + 32;
+        sourcePositions.set(sourceId, { x: sourceX, y: sourceY, cy, right: sourceX + colW.source });
+        groupPositions.set(sourceId, { x: groupX, y: sourceY, cy, left: groupX, right: groupX + colW.group, cx: groupX + colW.group / 2 });
 
         svg += `<g class="diag-node" data-source="${escapeHtml(sourceId)}">`;
-        svg += `<rect x="${sourceX}" y="${sourceY}" width="${colW.source}" height="50" rx="6" fill="#11161f" stroke="${sourceColor}" stroke-width="2"/>`;
-        svg += `<text x="${sourceX + colW.source / 2}" y="${sourceY + 20}" text-anchor="middle" fill="#d8e0ea" font-size="12" font-weight="600">${escapeHtml(sourceName)}</text>`;
-        svg += `<text x="${sourceX + colW.source / 2}" y="${sourceY + 38}" text-anchor="middle" fill="#6b7689" font-size="10">${escapeHtml(sourceInfo?.progId || sourceInfo?.ProgId || 'DA source')}</text>`;
+        svg += `<rect x="${sourceX}" y="${sourceY}" width="${colW.source}" height="64" rx="6" fill="#11161f" stroke="${sourceColor}" stroke-width="2"/>`;
+        svg += `<text x="${sourceX + colW.source / 2}" y="${sourceY + 24}" text-anchor="middle" fill="#d8e0ea" font-size="12" font-weight="600">${escapeHtml(sourceName)}</text>`;
+        svg += `<text x="${sourceX + colW.source / 2}" y="${sourceY + 44}" text-anchor="middle" fill="#6b7689" font-size="10">${escapeHtml(sourceInfo?.progId || sourceInfo?.ProgId || 'DA source')}</text>`;
         svg += `</g>`;
 
-        if (tags.length === 0) {
-            const emptyY = currentY + 15;
-            svg += `<text x="${tagX}" y="${emptyY + 14}" fill="#6b7689" font-size="10">(no mapped tags)</text>`;
-            maxY = Math.max(maxY, currentY + 50);
-            currentY += 50 + sourceGap;
-            return;
-        }
+        const groupStatus = summary.total === 0 ? 'off' : summary.flow;
+        const groupColor = getStatusColor(groupStatus);
+        const line2 = summary.total === 0
+            ? 'no mapped tags'
+            : `${summary.good} good · ${summary.warn} stale · ${summary.bad} bad`;
+        const line3 = summary.total === 0 ? '' : `${summary.mqtt} MQTT · ${summary.enabled}/${summary.total} enabled`;
 
-        tags.forEach((tag, tagIdx) => {
-            const itemId = tag.daItemId || tag.DaItemId || '';
-            const tKey = tagKey(sourceId, itemId);
-            const tagY = currentY + tagIdx * tagSpacing;
-            const cy = tagY + 15;
-            tagPositions.set(tKey, { x: tagX, y: tagY, cx: tagX + colW.tag / 2, cy, right: tagX + colW.tag, left: tagX });
+        svg += drawEdge(sourceX + colW.source, cy, groupX, cy, groupStatus, groupColor);
 
-            const tagStatus = getTagStatus(tag);
-            const tagColor = getStatusColor(tagStatus);
-            const tagName = String(itemId).split('.').pop() || itemId;
-            const mqttOn = (tag.mqttEnabled ?? tag.MqttEnabled) === true;
+        svg += `<g class="diag-node" data-source-group="${escapeHtml(sourceId)}">`;
+        svg += `<rect x="${groupX}" y="${sourceY}" width="${colW.group}" height="64" rx="6" fill="#11161f" stroke="${groupColor}" stroke-width="1.5"/>`;
+        svg += `<text x="${groupX + colW.group / 2}" y="${sourceY + 20}" text-anchor="middle" fill="#d8e0ea" font-size="12" font-weight="600">${summary.total} tags</text>`;
+        svg += `<text x="${groupX + colW.group / 2}" y="${sourceY + 38}" text-anchor="middle" fill="#6b7689" font-size="10">${escapeHtml(line2)}</text>`;
+        if (line3) svg += `<text x="${groupX + colW.group / 2}" y="${sourceY + 54}" text-anchor="middle" fill="#6b7689" font-size="10">${escapeHtml(line3)}</text>`;
+        svg += `</g>`;
 
-            svg += drawEdge(sourceX + colW.source, sourceY + 25, tagX, cy, tagStatus, tagColor);
-
-            svg += `<g class="diag-node" data-tag="${escapeHtml(tKey)}">`;
-            svg += `<rect x="${tagX}" y="${tagY}" width="${colW.tag}" height="30" rx="4" fill="#11161f" stroke="${tagColor}" stroke-width="1.5"/>`;
-            svg += `<text x="${tagX + colW.tag / 2}" y="${tagY + 19}" text-anchor="middle" fill="#d8e0ea" font-size="11">${escapeHtml(tagName)}${mqttOn ? ' · MQTT' : ''}</text>`;
-            svg += `</g>`;
-
-            maxY = Math.max(maxY, tagY + 30);
-        });
-
-        currentY += Math.max(tags.length * tagSpacing, 50) + sourceGap;
-        maxY = Math.max(maxY, currentY);
+        maxY = Math.max(maxY, sourceY + 64);
+        currentY += rowH + sourceGap;
     });
 
-    // DA-to-DA links between tag nodes (rules + legacy provider fields)
-    links.forEach((link, i) => {
-        const from = tagPositions.get(link.providerKey);
-        const to = tagPositions.get(link.consumerKey);
+    // Aggregate DA-to-DA by source pair
+    const pairMap = new Map();
+    links.forEach(link => {
+        const ep = linkEndpoints(link);
+        const fromSid = ep.providerSourceId || 'default';
+        const toSid = ep.consumerSourceId || 'default';
+        const key = fromSid + '=>' + toSid;
+        if (!pairMap.has(key)) pairMap.set(key, { fromSid, toSid, count: 0, status: 'off', same: fromSid === toSid });
+        const row = pairMap.get(key);
+        row.count++;
+        const st = (link.enabled === false || (link.enabled ?? link.Enabled) === false) ? 'off' : getLinkStatus(link);
+        row.status = worstStatus(row.status, st);
+    });
+
+    let pairIdx = 0;
+    pairMap.forEach(pair => {
+        if (pair.same) {
+            const g = groupPositions.get(pair.fromSid);
+            if (!g) return;
+            const color = getStatusColor(pair.status);
+            svg += `<circle cx="${g.cx}" cy="${g.y - 6}" r="8" fill="#11161f" stroke="${color}" stroke-width="1.5"/>`;
+            svg += `<text x="${g.cx}" y="${g.y - 2}" text-anchor="middle" fill="${color}" font-size="9">${pair.count}</text>`;
+            return;
+        }
+        const from = groupPositions.get(pair.fromSid);
+        const to = groupPositions.get(pair.toSid);
         if (!from || !to) return;
-        const status = link.enabled === false ? 'off' : getLinkStatus(link);
-        const color = getStatusColor(status);
-        const lift = 28 + (i % 5) * 10;
-        svg += drawCurve(from.cx, from.cy, to.cx, to.cy, status, color, lift);
-        svg += `<circle cx="${to.cx}" cy="${to.cy - 10}" r="2.5" fill="${color}" opacity="0.8"/>`;
+        const color = getStatusColor(pair.status);
+        const lift = 36 + (pairIdx % 4) * 12;
+        pairIdx++;
+        svg += drawCurve(from.cx, from.cy, to.cx, to.cy, pair.status, color, lift);
+        const midX = (from.cx + to.cx) / 2;
+        const midY = Math.min(from.cy, to.cy) - lift + 8;
+        svg += `<rect x="${midX - 12}" y="${midY - 9}" width="24" height="14" rx="3" fill="#11161f" stroke="${color}" stroke-width="1"/>`;
+        svg += `<text x="${midX}" y="${midY + 2}" text-anchor="middle" fill="${color}" font-size="9">${pair.count}</text>`;
     });
 
     // UA hub
-    const anyLive = mappings.some(t => {
-        const s = getTagStatus(t);
-        return s === 'good' || s === 'warn' || s === 'bad';
-    });
-    const uaStatus = anyLive
-        ? (mappings.some(t => getTagStatus(t) === 'bad') ? 'bad' : (mappings.some(t => getTagStatus(t) === 'warn') ? 'warn' : 'good'))
-        : 'off';
+    const uaStatus = overallFlow;
     const uaColor = getStatusColor(uaStatus);
-    const uaY = Math.max(startY, (maxY - startY) / 2);
+    const uaY = Math.max(startY, (maxY + startY) / 2 - 28);
     svg += `<g class="diag-node">`;
     svg += `<rect x="${uaX}" y="${uaY}" width="${colW.hub}" height="56" rx="6" fill="#11161f" stroke="${uaColor}" stroke-width="2"/>`;
     svg += `<text x="${uaX + colW.hub / 2}" y="${uaY + 22}" text-anchor="middle" fill="#d8e0ea" font-size="12" font-weight="600">OPC UA Server</text>`;
-    svg += `<text x="${uaX + colW.hub / 2}" y="${uaY + 40}" text-anchor="middle" fill="#6b7689" font-size="10">Namespace 2</text>`;
+    svg += `<text x="${uaX + colW.hub / 2}" y="${uaY + 40}" text-anchor="middle" fill="#6b7689" font-size="10">${totalTags} mapped</text>`;
     svg += `</g>`;
 
-    mappings.forEach(tag => {
-        const sid = tag.sourceId || tag.SourceId || 'default';
-        const itemId = tag.daItemId || tag.DaItemId || '';
-        const pos = tagPositions.get(tagKey(sid, itemId));
-        if (!pos) return;
-        const tagStatus = getTagStatus(tag);
-        const tagColor = getStatusColor(tagStatus);
-        svg += drawEdge(pos.right, pos.cy, uaX, uaY + 28, tagStatus, tagColor);
+    groupPositions.forEach((pos, sourceId) => {
+        const summary = summaries.get(sourceId) || { flow: 'off', total: 0 };
+        const st = summary.total === 0 ? 'off' : summary.flow;
+        svg += drawEdge(pos.right, pos.cy, uaX, uaY + 28, st, getStatusColor(st));
     });
 
-    // MQTT hub + wires for every mapped tag (grey when MQTT disabled)
+    // MQTT hub
     const brokerStatus = mqttBrokerStatus();
     const brokerColor = getStatusColor(brokerStatus);
     const mqttY = uaY + 100;
-    const mqttEnabledCount = mappings.filter(isMqttEnabled).length;
     svg += `<g class="diag-node">`;
     svg += `<rect x="${mqttX}" y="${mqttY}" width="${colW.hub}" height="56" rx="6" fill="#11161f" stroke="${brokerColor}" stroke-width="2"/>`;
     svg += `<text x="${mqttX + colW.hub / 2}" y="${mqttY + 22}" text-anchor="middle" fill="#d8e0ea" font-size="12" font-weight="600">MQTT Broker</text>`;
-    svg += `<text x="${mqttX + colW.hub / 2}" y="${mqttY + 40}" text-anchor="middle" fill="#6b7689" font-size="10">${mqttEnabledCount}/${mappings.length} enabled</text>`;
+    svg += `<text x="${mqttX + colW.hub / 2}" y="${mqttY + 40}" text-anchor="middle" fill="#6b7689" font-size="10">${totalMqtt}/${totalTags} enabled</text>`;
     svg += `</g>`;
 
-    mappings.forEach(tag => {
-        const sid = tag.sourceId || tag.SourceId || 'default';
-        const itemId = tag.daItemId || tag.DaItemId || '';
-        const pos = tagPositions.get(tagKey(sid, itemId));
-        if (!pos) return;
-        const mqttOn = isMqttEnabled(tag);
-        const tagStatus = getTagStatus(tag);
+    groupPositions.forEach((pos, sourceId) => {
+        const summary = summaries.get(sourceId) || { mqtt: 0, flow: 'off' };
         let edgeStatus = 'off';
-        if (mqttOn) {
-            if (brokerStatus === 'good' && (tagStatus === 'good' || tagStatus === 'warn')) edgeStatus = tagStatus;
+        if (summary.mqtt > 0) {
+            if (brokerStatus === 'good' && (summary.flow === 'good' || summary.flow === 'warn' || summary.flow === 'bad')) edgeStatus = summary.flow === 'off' ? 'warn' : summary.flow;
             else if (brokerStatus === 'good') edgeStatus = 'warn';
+            else edgeStatus = brokerStatus === 'off' ? 'off' : brokerStatus;
         }
-        const edgeColor = getStatusColor(edgeStatus);
-        svg += drawEdge(pos.right, pos.cy, mqttX, mqttY + 28, edgeStatus, edgeColor);
+        svg += drawEdge(pos.right, pos.cy, mqttX, mqttY + 28, edgeStatus, getStatusColor(edgeStatus));
     });
 
-    // legend notes
-    svg += `<text x="${sourceX}" y="${maxY + 40}" fill="#6b7689" font-size="10">Grey = inactive · Color = live · Curves = DA→DA provider→consumer</text>`;
+    svg += `<text x="${sourceX}" y="${Math.max(maxY, mqttY + 56) + 36}" fill="#6b7689" font-size="10">Aggregated trunks · Grey = inactive · Color = live · Curves = DA→DA between sources (count badge)</text>`;
 
-    return { svg, maxHeight: Math.max(maxY, mqttY + 56) + 70, maxWidth: 1220 };
+    return { svg, maxHeight: Math.max(maxY, mqttY + 56) + 60, maxWidth: 1240 };
 }
 
 function renderDaUaDiagram() {
     const mappings = state.mappings || [];
     const sources = state.sources || [];
-    
+
     if (mappings.length === 0) {
-        return { svg: '<text x="50%" y="50%" text-anchor="middle" fill="#6b7689" font-size="14">No tags configured</text>', maxHeight: 600 };
+        return { svg: '<text x="50%" y="50%" text-anchor="middle" fill="#6b7689" font-size="14">No tags configured</text>', maxHeight: 600, maxWidth: 1100 };
     }
-    
-    // Group tags by source
+
+    // Default: aggregated source trunks (scales to tens of thousands).
+    // Expand a source to inspect a paged tag slice (DIAG_EXPAND_PAGE).
     const bySource = new Map();
     mappings.forEach(m => {
-        const sid = m.sourceId || 'default';
+        const sid = m.sourceId || m.SourceId || 'default';
         if (!bySource.has(sid)) bySource.set(sid, []);
         bySource.get(sid).push(m);
     });
-    
-    const sourceCount = bySource.size;
-    const tagCount = mappings.length;
-    const startX = 80;
-    const sourceX = startX;
-    const tagX = startX + 250;
-    const uaX = startX + 500;
-    const startY = 80;
-    const sourceSpacing = 120;
-    const tagSpacing = 40;
-    
+    sources.forEach(s => {
+        const sid = s.sourceId || s.SourceId || 'default';
+        if (!bySource.has(sid)) bySource.set(sid, []);
+    });
+
+    const sourceX = 50;
+    const groupX = 300;
+    const tagX = 620;
+    const uaX = 920;
+    const colW = { source: 200, group: 250, tag: 190, hub: 160 };
+    const startY = 70;
+    const rowH = 84;
+    const tagSpacing = 34;
+    const sourceGap = 20;
+    const pageSize = DIAG_EXPAND_PAGE;
+
     let svg = '';
+    const totalTags = mappings.length;
+    const sourceCount = bySource.size;
+    svg += `<text x="50" y="28" fill="#6b7689" font-size="11" font-weight="600">DA → UA (aggregated)</text>`;
+    svg += `<text x="50" y="46" fill="#6b7689" font-size="10">${sourceCount} sources · ${totalTags} tags · click a tag-group to expand (page ${pageSize}) · Fit/pan for overview</text>`;
+
+    const groupPositions = new Map();
+    const summaries = new Map();
     let currentY = startY;
-    let maxY = startY + 50;
-    
-    // Draw sources and their tags
-    const sourcePositions = new Map();
-    const tagPositions = new Map();
-    
-    Array.from(bySource.entries()).forEach(([sourceId, tags], idx) => {
-        const sourceY = currentY;
-        sourcePositions.set(sourceId, { x: sourceX, y: sourceY });
-        
-        // Source node
-        const sourceInfo = sources.find(s => s.sourceId === sourceId);
-        const sourceName = sourceInfo?.displayName || sourceId;
+    let maxY = startY;
+    let overallFlow = 'off';
+
+    Array.from(bySource.entries()).forEach(([sourceId, tags]) => {
+        const sourceInfo = sources.find(s => (s.sourceId || s.SourceId) === sourceId);
+        const sourceName = sourceInfo?.displayName || sourceInfo?.DisplayName || sourceId;
         const sourceStatus = getSourceStatus(sourceId);
         const sourceColor = getStatusColor(sourceStatus);
-        
-        svg += `<g class="diag-node" data-source="${sourceId}">`;
-        svg += `<rect x="${sourceX}" y="${sourceY}" width="140" height="50" rx="6" fill="#11161f" stroke="${sourceColor}" stroke-width="2"/>`;
-        svg += `<text x="${sourceX + 70}" y="${sourceY + 20}" text-anchor="middle" fill="#d8e0ea" font-size="12" font-weight="600">${escapeHtml(sourceName)}</text>`;
-        svg += `<text x="${sourceX + 70}" y="${sourceY + 38}" text-anchor="middle" fill="#6b7689" font-size="10">${escapeHtml(sourceInfo?.progId || '')}</text>`;
+        const summary = summarizeTags(tags);
+        summaries.set(sourceId, summary);
+        overallFlow = worstStatus(overallFlow, summary.flow);
+
+        const expanded = !!state.diagramExpandedSources[sourceId];
+        const page = Math.max(0, Number(state.diagramExpandPage[sourceId] || 0));
+        const pageCount = Math.max(1, Math.ceil(Math.max(tags.length, 1) / pageSize));
+        const safePage = Math.min(page, pageCount - 1);
+        if (safePage !== page) state.diagramExpandPage[sourceId] = safePage;
+        const sliceStart = safePage * pageSize;
+        const slice = expanded ? tags.slice(sliceStart, sliceStart + pageSize) : [];
+        const blockH = expanded
+            ? 72 + Math.max(slice.length, 1) * tagSpacing + (tags.length > pageSize ? 30 : 10)
+            : 64;
+        const sourceY = currentY;
+        const groupCy = sourceY + 32;
+
+        // Source box
+        svg += `<g class="diag-node" data-source="${escapeHtml(sourceId)}">`;
+        svg += `<rect x="${sourceX}" y="${sourceY}" width="${colW.source}" height="64" rx="6" fill="#11161f" stroke="${sourceColor}" stroke-width="2"/>`;
+        svg += `<text x="${sourceX + colW.source / 2}" y="${sourceY + 24}" text-anchor="middle" fill="#d8e0ea" font-size="12" font-weight="600">${escapeHtml(sourceName)}</text>`;
+        svg += `<text x="${sourceX + colW.source / 2}" y="${sourceY + 44}" text-anchor="middle" fill="#6b7689" font-size="10">${escapeHtml(sourceInfo?.progId || sourceInfo?.ProgId || 'DA source')}</text>`;
         svg += `</g>`;
-        
-        // Draw tags for this source
-        tags.forEach((tag, tagIdx) => {
-            const tagY = sourceY + tagIdx * tagSpacing;
-            const tagKey = `${sourceId}||${tag.daItemId}`;
-            tagPositions.set(tagKey, { x: tagX, y: tagY + 15 });
-            
-            const tagStatus = getTagStatus(tag);
-            const tagColor = getStatusColor(tagStatus);
-            const tagName = tag.daItemId.split('.').pop() || tag.daItemId;
-            
-            // Edge from source to tag
-            svg += `<path class="diag-edge ${tagStatus}" d="M ${sourceX + 140} ${sourceY + 25} L ${tagX} ${tagY + 15}" stroke="${tagColor}"/>`;
-            svg += `<path class="diag-flow ${tagStatus}" d="M ${sourceX + 140} ${sourceY + 25} L ${tagX} ${tagY + 15}" stroke="${tagColor}"/>`;
-            
-            // Tag node
-            svg += `<g class="diag-node" data-tag="${tagKey}">`;
-            svg += `<rect x="${tagX}" y="${tagY}" width="160" height="30" rx="4" fill="#11161f" stroke="${tagColor}" stroke-width="1.5"/>`;
-            svg += `<text x="${tagX + 80}" y="${tagY + 19}" text-anchor="middle" fill="#d8e0ea" font-size="11">${escapeHtml(tagName)}</text>`;
-            svg += `</g>`;
-            
-            // Edge from tag to UA
-            const uaY = startY + 25;
-            svg += `<path class="diag-edge ${tagStatus}" d="M ${tagX + 160} ${tagY + 15} L ${uaX} ${uaY}" stroke="${tagColor}"/>`;
-            svg += `<path class="diag-flow ${tagStatus}" d="M ${tagX + 160} ${tagY + 15} L ${uaX} ${uaY}" stroke="${tagColor}"/>`;
-            
-            maxY = Math.max(maxY, tagY + 30);
+
+        // Tag-group summary (click to expand/collapse)
+        const groupStatus = summary.total === 0 ? 'off' : summary.flow;
+        const groupColor = getStatusColor(groupStatus);
+        const line2 = summary.total === 0 ? 'no mapped tags' : `${summary.good} good · ${summary.warn} stale · ${summary.bad} bad`;
+        const line3 = expanded ? `expanded · page ${safePage + 1}/${pageCount}` : (summary.total ? 'click to expand tags' : '');
+
+        svg += drawEdge(sourceX + colW.source, groupCy, groupX, groupCy, groupStatus, groupColor);
+
+        svg += `<g class="diag-node" data-diag-action="toggle-expand" data-source-id="${attr(sourceId)}" style="cursor:pointer">`;
+        svg += `<rect x="${groupX}" y="${sourceY}" width="${colW.group}" height="64" rx="6" fill="#11161f" stroke="${groupColor}" stroke-width="1.5"/>`;
+        svg += `<text x="${groupX + colW.group / 2}" y="${sourceY + 20}" text-anchor="middle" fill="#d8e0ea" font-size="12" font-weight="600">${summary.total} tags ${expanded ? '▾' : '▸'}</text>`;
+        svg += `<text x="${groupX + colW.group / 2}" y="${sourceY + 38}" text-anchor="middle" fill="#6b7689" font-size="10">${escapeHtml(line2)}</text>`;
+        if (line3) svg += `<text x="${groupX + colW.group / 2}" y="${sourceY + 54}" text-anchor="middle" fill="#6b7689" font-size="10">${escapeHtml(line3)}</text>`;
+        svg += `</g>`;
+
+        groupPositions.set(sourceId, {
+            x: groupX, y: sourceY, cy: groupCy,
+            right: groupX + colW.group,
+            expanded, slice, sliceStart, pageCount, safePage, tags
         });
-        
-        currentY += Math.max(tags.length * tagSpacing, 80) + 40;
-        maxY = Math.max(maxY, currentY);
+
+        // Expanded per-tag detail (paged) + direct tag→UA edges
+        const detailPositions = [];
+        if (expanded && slice.length) {
+            slice.forEach((tag, i) => {
+                const itemId = tag.daItemId || tag.DaItemId || '';
+                const tKey = tagKey(sourceId, itemId);
+                const tagY = sourceY + 72 + i * tagSpacing;
+                const cy = tagY + 14;
+                const tagStatus = getTagStatus(tag);
+                const tagColor = getStatusColor(tagStatus);
+                const tagName = String(itemId).split('.').pop() || itemId;
+
+                svg += drawEdge(groupX + colW.group, groupCy, tagX, cy, tagStatus, tagColor);
+                svg += `<g class="diag-node" data-tag="${escapeHtml(tKey)}">`;
+                svg += `<rect x="${tagX}" y="${tagY}" width="${colW.tag}" height="28" rx="4" fill="#11161f" stroke="${tagColor}" stroke-width="1.5"/>`;
+                svg += `<text x="${tagX + colW.tag / 2}" y="${tagY + 18}" text-anchor="middle" fill="#d8e0ea" font-size="11">${escapeHtml(tagName)}</text>`;
+                svg += `</g>`;
+                detailPositions.push({ right: tagX + colW.tag, cy, status: tagStatus, color: tagColor });
+                maxY = Math.max(maxY, tagY + 28);
+            });
+
+            if (tags.length > pageSize) {
+                const navY = sourceY + 72 + slice.length * tagSpacing + 6;
+                const canPrev = safePage > 0;
+                const canNext = safePage < pageCount - 1;
+                if (canPrev) {
+                    svg += `<g class="diag-node" data-diag-action="expand-page" data-source-id="${attr(sourceId)}" data-dir="-1" style="cursor:pointer">`;
+                    svg += `<rect x="${tagX}" y="${navY}" width="70" height="22" rx="4" fill="#1a2230" stroke="#6b7689"/>`;
+                    svg += `<text x="${tagX + 35}" y="${navY + 15}" text-anchor="middle" fill="#d8e0ea" font-size="10">← Prev</text></g>`;
+                }
+                if (canNext) {
+                    svg += `<g class="diag-node" data-diag-action="expand-page" data-source-id="${attr(sourceId)}" data-dir="1" style="cursor:pointer">`;
+                    svg += `<rect x="${tagX + 80}" y="${navY}" width="70" height="22" rx="4" fill="#1a2230" stroke="#6b7689"/>`;
+                    svg += `<text x="${tagX + 115}" y="${navY + 15}" text-anchor="middle" fill="#d8e0ea" font-size="10">Next →</text></g>`;
+                }
+                svg += `<text x="${tagX + 170}" y="${navY + 15}" fill="#6b7689" font-size="10">${sliceStart + 1}–${sliceStart + slice.length} / ${tags.length}</text>`;
+                maxY = Math.max(maxY, navY + 22);
+            }
+        }
+
+        groupPositions.get(sourceId).detailPositions = detailPositions;
+
+        maxY = Math.max(maxY, sourceY + blockH);
+        currentY += blockH + sourceGap;
     });
-    
-    // UA Server node — grey by default, colored when any mapped tag is live
-    const uaY = startY;
-    const anyLive = mappings.some(t => getTagStatus(t) === 'good' || getTagStatus(t) === 'warn' || getTagStatus(t) === 'bad');
-    const uaColor = anyLive ? getStatusColor(mappings.some(t => getTagStatus(t) === 'bad') ? 'bad' : (mappings.some(t => getTagStatus(t) === 'warn') ? 'warn' : 'good')) : getStatusColor('off');
+
+    // UA hub
+    const uaStatus = overallFlow;
+    const uaColor = getStatusColor(uaStatus);
+    const uaY = Math.max(startY, (maxY + startY) / 2 - 28);
     svg += `<g class="diag-node">`;
-    svg += `<rect x="${uaX}" y="${uaY}" width="140" height="50" rx="6" fill="#11161f" stroke="${uaColor}" stroke-width="2"/>`;
-    svg += `<text x="${uaX + 70}" y="${uaY + 20}" text-anchor="middle" fill="#d8e0ea" font-size="12" font-weight="600">OPC UA Server</text>`;
-    svg += `<text x="${uaX + 70}" y="${uaY + 38}" text-anchor="middle" fill="#6b7689" font-size="10">Namespace 2</text>`;
+    svg += `<rect x="${uaX}" y="${uaY}" width="${colW.hub}" height="56" rx="6" fill="#11161f" stroke="${uaColor}" stroke-width="2"/>`;
+    svg += `<text x="${uaX + colW.hub / 2}" y="${uaY + 22}" text-anchor="middle" fill="#d8e0ea" font-size="12" font-weight="600">OPC UA Server</text>`;
+    svg += `<text x="${uaX + colW.hub / 2}" y="${uaY + 40}" text-anchor="middle" fill="#6b7689" font-size="10">${totalTags} mapped</text>`;
     svg += `</g>`;
-    
-    return { svg, maxHeight: maxY + 80 };
+
+    // Trunks: collapsed group → UA; expanded visible tags → UA
+    groupPositions.forEach((pos, sourceId) => {
+        const summary = summaries.get(sourceId) || { flow: 'off', total: 0 };
+        const details = pos.detailPositions || [];
+        if (pos.expanded && details.length) {
+            details.forEach(p => {
+                svg += drawEdge(p.right, p.cy, uaX, uaY + 28, p.status, p.color);
+            });
+            // residual trunk when more tags exist outside the page
+            if ((pos.tags || []).length > details.length) {
+                const st = summary.flow === 'off' ? 'off' : 'warn';
+                svg += drawEdge(pos.right, pos.cy, uaX, uaY + 28, st, getStatusColor(st));
+            }
+        } else {
+            const st = summary.total === 0 ? 'off' : summary.flow;
+            svg += drawEdge(pos.right, pos.cy, uaX, uaY + 28, st, getStatusColor(st));
+        }
+    });
+
+    svg += `<text x="${sourceX}" y="${maxY + 36}" fill="#6b7689" font-size="10">Collapsed = 1 trunk/source (safe at 10k+ tags) · Expanded = paged tag detail · Grey = inactive · Color = live</text>`;
+
+    return { svg, maxHeight: maxY + 60, maxWidth: 1120 };
 }
 
 function renderDaDaDiagram() {
@@ -2855,6 +3146,7 @@ function bindDynamicButtons() {
 
 
 document.addEventListener('DOMContentLoaded', async () => {
+    bindDiagramPanZoom();
     el('selectedSource').addEventListener('change', e => pickSource(e.target.value));
     el('mapSourceSelect').addEventListener('change', e => pickSource(e.target.value));
     el('cfgApply').addEventListener('click', () => saveSource().catch(e => el('cfgMessage').textContent = '✗ ' + e.message));
