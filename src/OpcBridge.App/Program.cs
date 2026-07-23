@@ -6,6 +6,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using OpcBridge.App;
+using OpcBridge.App.Hmi;
+using OpcBridge.Client;
 using OpcBridge.Core;
 using OpcBridge.Da;
 using OpcBridge.Mqtt;
@@ -51,6 +53,8 @@ app.MapGet("/", (HttpContext ctx) => {
     return Results.Bytes(System.Text.Encoding.UTF8.GetBytes(DashboardPage.FullHtml), "text/html; charset=utf-8");
 });
 app.MapGet("/api/values", (BridgeState state) => Results.Json(new { values = state.GetValues() }));
+app.MapGet("/api/hmi/tags", (MappingStore mappingStore, BridgeState state) =>
+    Results.Json(HmiTagSnapshot.Build(mappingStore, state)));
  app.MapGet("/api/status", (BridgeState state, UaServerHost uaServer, BridgeAppDiscovery discovery) => Results.Json(new
  {
      bridge = state.GetStatus(),
