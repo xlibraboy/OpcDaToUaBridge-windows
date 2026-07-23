@@ -13,6 +13,8 @@ public sealed class MappingStore
     private List<TagMapping> mappings_;
     private long version_;
 
+    public event Action<long>? Changed;
+
     public MappingStore(IOptions<BridgeOptions> options)
     {
         persist_path_ = Path.Combine(AppContext.BaseDirectory, "mappings.json");
@@ -34,6 +36,8 @@ public sealed class MappingStore
 
     public long Add(IEnumerable<TagMapping> tags)
     {
+        long raisedVersion = 0;
+        bool raise = false;
         lock (sync_)
         {
             // Build a HashSet of existing keys for O(1) duplicate lookup
@@ -67,13 +71,27 @@ public sealed class MappingStore
             {
                 version_++;
                 Persist();
+                raisedVersion = version_;
+                raise = true;
             }
 
-            return version_;
+            if (!raise)
+            {
+                return version_;
+            }
         }
+
+        if (raise)
+        {
+            Changed?.Invoke(raisedVersion);
+        }
+
+        return raisedVersion;
     }
     public bool TryUpdate(TagMapping tag, out long version)
     {
+        long raisedVersion = 0;
+        bool raise = false;
         lock (sync_)
         {
             TagMapping normalized = Normalize(tag);
@@ -90,9 +108,17 @@ public sealed class MappingStore
             mappings_[index] = normalized;
             version_++;
             Persist();
-            version = version_;
-            return true;
+            raisedVersion = version_;
+            version = raisedVersion;
+            raise = true;
         }
+
+        if (raise)
+        {
+            Changed?.Invoke(raisedVersion);
+        }
+
+        return true;
     }
 
     public long Remove(string sourceId, string daItemId)
@@ -100,6 +126,8 @@ public sealed class MappingStore
         string normalizedSourceId = NormalizeSourceId(sourceId);
         string normalizedItemId = daItemId?.Trim() ?? string.Empty;
 
+        long raisedVersion = 0;
+        bool raise = false;
         lock (sync_)
         {
             int removed = mappings_.RemoveAll(mapping =>
@@ -110,16 +138,30 @@ public sealed class MappingStore
             {
                 version_++;
                 Persist();
+                raisedVersion = version_;
+                raise = true;
             }
 
-            return version_;
+            if (!raise)
+            {
+                return version_;
+            }
         }
+
+        if (raise)
+        {
+            Changed?.Invoke(raisedVersion);
+        }
+
+        return raisedVersion;
     }
 
     public long RemoveSource(string sourceId)
     {
         string normalizedSourceId = NormalizeSourceId(sourceId);
 
+        long raisedVersion = 0;
+        bool raise = false;
         lock (sync_)
         {
             int removed = mappings_.RemoveAll(mapping =>
@@ -129,21 +171,37 @@ public sealed class MappingStore
             {
                 version_++;
                 Persist();
+                raisedVersion = version_;
+                raise = true;
             }
 
-            return version_;
+            if (!raise)
+            {
+                return version_;
+            }
         }
+
+        if (raise)
+        {
+            Changed?.Invoke(raisedVersion);
+        }
+
+        return raisedVersion;
     }
 
     public long SetAll(IEnumerable<TagMapping> tags)
     {
+        long raisedVersion;
         lock (sync_)
         {
             mappings_ = NormalizeAll(tags);
             version_++;
             Persist();
-            return version_;
+            raisedVersion = version_;
         }
+
+        Changed?.Invoke(raisedVersion);
+        return raisedVersion;
     }
 
     public IReadOnlyList<TagMapping> GetBySource(string sourceId)
