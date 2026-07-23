@@ -9,6 +9,8 @@ using OpcBridge.Da;
 using OpcBridge.Mqtt;
 using OpcBridge.Ua;
 using System.Threading.Channels;
+using System.Text.Json;
+
 
 namespace OpcBridge.App;
 
@@ -753,6 +755,76 @@ public sealed class BridgeWorker : BackgroundService, IDaLinkMetadataResolver
             tcs.TrySetResult(false);
             return false;
         }
+    }
+
+    public async Task<(bool Ok, string? Error)> TryHmiWriteAsync(
+        string sourceId,
+        string daItemId,
+        object? value,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(sourceId) || string.IsNullOrWhiteSpace(daItemId))
+        {
+            return (false, "sourceId and daItemId are required");
+        }
+
+        (IReadOnlyList<TagMapping> mappings, _) = mapping_store_.GetSnapshot();
+        TagMapping? mapping = mappings.FirstOrDefault(m =>
+            string.Equals(m.SourceId, sourceId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(m.DaItemId, daItemId, StringComparison.OrdinalIgnoreCase));
+
+        if (mapping is null)
+        {
+            return (false, "Tag is not mapped");
+        }
+
+        if (!mapping.Enabled)
+        {
+            return (false, "Tag is disabled");
+        }
+
+        if (!mapping.Writeable)
+        {
+            return (false, "Tag is read-only");
+        }
+
+        if (write_queue_ is null)
+        {
+            return (false, "Bridge write path is not ready");
+        }
+
+        object? converted = ConvertHmiValue(mapping, value);
+        bool ok = await ApplyUaWriteAsync(mapping.SourceId, mapping.DaItemId, converted, DateTime.UtcNow, ct)
+            .ConfigureAwait(false);
+        return ok ? (true, null) : (false, "Write failed or timed out");
+    }
+
+    private static object? ConvertHmiValue(TagMapping mapping, object? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        if (value is JsonElement je)
+        {
+            value = je.ValueKind switch
+            {
+                JsonValueKind.String => je.GetString(),
+                JsonValueKind.Number => je.TryGetInt64(out long l) ? l : je.GetDouble(),
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.Null => null,
+                _ => je.ToString()
+            };
+        }
+
+        if (value is string s)
+        {
+            return ConvertIncoming(mapping, s);
+        }
+
+        return value;
     }
     public object GetDiagnostics()
     {

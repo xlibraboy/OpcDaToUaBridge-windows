@@ -55,6 +55,15 @@ app.MapGet("/", (HttpContext ctx) => {
 app.MapGet("/api/values", (BridgeState state) => Results.Json(new { values = state.GetValues() }));
 app.MapGet("/api/hmi/tags", (MappingStore mappingStore, BridgeState state) =>
     Results.Json(HmiTagSnapshot.Build(mappingStore, state)));
+app.MapPost("/api/hmi/write", async (HmiWriteRequest request, BridgeWorker worker, CancellationToken ct) =>
+{
+    (bool ok, string? error) = await worker.TryHmiWriteAsync(
+        request.SourceId ?? string.Empty,
+        request.DaItemId ?? string.Empty,
+        request.Value,
+        ct).ConfigureAwait(false);
+    return Results.Json(new HmiWriteResponse { Ok = ok, Error = error });
+});
  app.MapGet("/api/status", (BridgeState state, UaServerHost uaServer, BridgeAppDiscovery discovery) => Results.Json(new
  {
      bridge = state.GetStatus(),

@@ -87,4 +87,50 @@ public sealed class HmiApiTests
         var real4 = list.Single(t => t.GetProperty("daItemId").GetString() == "Random.Real4");
         Assert.False(real4.GetProperty("writeable").GetBoolean());
     }
+
+    [Fact]
+    public async Task HmiWrite_RejectsReadOnlyTag()
+    {
+        await using var handle = await TestAppHandle.StartAsync(dir => WriteAppsettings(dir));
+
+        using var content = new StringContent(
+            """{"sourceId":"default","daItemId":"Random.Real4","value":1.5}""",
+            System.Text.Encoding.UTF8,
+            "application/json");
+        using HttpResponseMessage response = await handle.Client.PostAsync("/api/hmi/write", content);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
+        Assert.False(string.IsNullOrWhiteSpace(doc.RootElement.GetProperty("error").GetString()));
+    }
+
+    [Fact]
+    public async Task HmiWrite_RejectsUnknownTag()
+    {
+        await using var handle = await TestAppHandle.StartAsync(dir => WriteAppsettings(dir));
+
+        using var content = new StringContent(
+            """{"sourceId":"default","daItemId":"Does.Not.Exist","value":1}""",
+            System.Text.Encoding.UTF8,
+            "application/json");
+        using HttpResponseMessage response = await handle.Client.PostAsync("/api/hmi/write", content);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
+    }
+
+    [Fact]
+    public async Task HmiWrite_RejectsDisabledTag()
+    {
+        await using var handle = await TestAppHandle.StartAsync(dir => WriteAppsettings(dir));
+
+        using var content = new StringContent(
+            """{"sourceId":"default","daItemId":"Disabled.Tag","value":1}""",
+            System.Text.Encoding.UTF8,
+            "application/json");
+        using HttpResponseMessage response = await handle.Client.PostAsync("/api/hmi/write", content);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
+    }
 }
