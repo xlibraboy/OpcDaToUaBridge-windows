@@ -4,11 +4,12 @@ Instruction file for AI agents working in this repo. All facts below are verifie
 
 ## What this project is
 
-A bridge that mirrors OPC DA tag values into an OPC UA server, with a web dashboard for configuration and monitoring. Single Windows process at runtime (DA COM requires Windows); edited and built on Linux, deployed to a Windows host.
+A bridge that mirrors OPC DA tag values into an OPC UA server, with a web dashboard for configuration and monitoring and an optional Avalonia HMI operator client. Bridge is a single Windows process at runtime (DA COM requires Windows); the HMI is a **separate process**. Edited and built on Linux, deployed to a Windows host.
 
 - **DA side**: connects to one or more OPC DA servers via direct COM/DCOM interop (no vendor SDK).
 - **UA side**: an in-process OPC UA server (OPCFoundation.NetStandard SDK) that mirrors DA reads as UA variables.
 - **Dashboard**: ASP.NET Core minimal API + single-page HTML dashboard for sources, mappings, browsing, live values, MQTT, and Diagram topology.
+- **HMI**: Avalonia desktop operator client (`OpcBridge.Hmi`) connecting to bridge HTTP + SignalR on port 8080 only. Trends / Influx history / auth / Android are deferred non-goals.
 
 ## Project map
 
@@ -20,9 +21,11 @@ Projects under `src/`, all .NET 8, `ImplicitUsings` + `Nullable` enabled.
 | `OpcBridge.Da` | `net8.0;net8.0-windows` | DA client + browsing + server enumeration + Windows impersonation. Multi-targeted so it compiles on Linux but only runs COM on Windows. |
 | `OpcBridge.Ua` | `net8.0` | UA server: `BridgeUaServer` (extends `StandardServer`), `BridgeNodeManager` (extends `CustomNodeManager2`), `UaServerHost`. Depends on `OPCFoundation.NetStandard.Opc.Ua` 1.5.378.145. |
 | `OpcBridge.Mqtt` | `net8.0` | MQTT publish/subscribe helper for mapped tags. |
-| `OpcBridge.App` | `net8.0` (Web SDK) | Entrypoint, HTTP API, dashboard HTML/JS (`DashboardPage`), `BridgeWorker`, `BridgeState`, `MappingStore`, `DaRuntimeSettings`, `DaClientFactory`, `DashboardLogStore`. References Core, Da, Ua, Mqtt. |
+| `OpcBridge.App` | `net8.0` (Web SDK) | Entrypoint, HTTP API, dashboard HTML/JS (`DashboardPage`), `BridgeWorker`, `BridgeState`, `MappingStore`, `DaRuntimeSettings`, `DaClientFactory`, `DashboardLogStore`, HMI snapshot/write API + SignalR hub. References Core, Da, Ua, Mqtt, Client. |
+| `OpcBridge.Client` | `net8.0` | Shared HMI/App wire DTOs and tag-cache merge helpers: `HmiTagDto`, `HmiTagsResponse`, `HmiValueDelta`, `HmiWriteRequest`/`HmiWriteResponse`, `HmiMappingsChanged`, `HmiTagCache`. No framework deps. |
+| `OpcBridge.Hmi` | `net8.0` (WinExe) | Avalonia 11 operator client: connect bar, tag grid, faceplate write. References Client; SignalR client for `/hmi`. Separate process from the bridge. |
 
-Reference graph: `App → {Core, Da, Ua, Mqtt}`, `Da → Core`, `Ua → Core`, `Mqtt → Core`. Core depends on nothing.
+Reference graph: `App → {Core, Da, Ua, Mqtt, Client}`, `Hmi → Client`, `Da → Core`, `Ua → Core`, `Mqtt → Core`. Core and Client depend on nothing.
 
 ## Key contracts (OpcBridge.Core)
 
@@ -100,6 +103,9 @@ ASP.NET Core minimal API, listens on `http://0.0.0.0:8080`. Dashboard is a singl
 Endpoints (all in `Program.cs`):
 - `GET /` — dashboard HTML
 - `GET /api/values` — current `BridgeState` values
+- `GET /api/hmi/tags` — HMI tag snapshot (mappings + current values) for the operator client
+- `POST /api/hmi/write` — HMI write request; gated on mapping `Writeable`; reuses `WriteQueue` / `ApplyUaWriteAsync` path
+- SignalR hub `/hmi` — events `values` (batched `HmiValueDelta[]`) and `mappingsChanged` (`HmiMappingsChanged`)
 - `GET /api/status` | `/api/dashboard` — bridge + UA status (dashboard also includes values)
 - `GET /api/logs?limit=&level=` — `DashboardLogStore` ring buffer (500 entries)
 - `GET /api/app-info` | `/api/version` — assembly info
@@ -112,6 +118,8 @@ Endpoints (all in `Program.cs`):
 - `GET /api/da-links` (and related write endpoints) — DA→DA provider/consumer links
 - MQTT config/status/values endpoints under `/api/mqtt/*`
 - `GET /health` — `{ "status": "ok" }`
+
+HMI note: the operator UI is not embedded in the dashboard; run `dotnet run --project src/OpcBridge.Hmi` against the bridge base URL (`http://<host>:8080`). Historical trends are deferred.
 
 `DashboardLogStore` is also wired as an `ILoggerProvider` (`DashboardLogProvider`), so `ILogger` calls under the `OpcBridge.*` categories at Information+ appear in the dashboard's Logs panel.
 
