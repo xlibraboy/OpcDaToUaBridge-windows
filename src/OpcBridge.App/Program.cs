@@ -42,6 +42,9 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<BridgeWorker>());
  builder.Services.AddHttpClient("BridgeAppDiscovery", client => client.Timeout = TimeSpan.FromSeconds(2));
  builder.Services.AddSingleton<BridgeAppDiscovery>();
  builder.Services.AddHostedService(sp => sp.GetRequiredService<BridgeAppDiscovery>());
+builder.Services.AddSignalR();
+builder.Services.AddHostedService<HmiBroadcastService>();
+
 
 WebApplication app = builder.Build();
 TryMigrateLegacyDaLinks(app);
@@ -791,6 +794,7 @@ app.MapGet("/api/mqtt/values", (MqttValueStore values, string? direction, string
 });
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+app.MapHub<HmiHub>("/hmi");
 
 await app.RunAsync().ConfigureAwait(false);
 
