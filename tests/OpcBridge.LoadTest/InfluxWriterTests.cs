@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Options;
 using OpcBridge.App;
 using OpcBridge.Core;
+using OpcBridge.Influx;
 using Xunit;
 
 namespace OpcBridge.LoadTest;
@@ -59,5 +60,33 @@ public sealed class InfluxWriterTests
         (IReadOnlyList<TagMapping> snapshot, _) = store.GetSnapshot();
         TagMapping mapping = Assert.Single(snapshot.Where(m => m.DaItemId == "tag.a"));
         Assert.True(mapping.InfluxEnabled);
+    }
+
+    [Theory]
+    [InlineData(true, "bool")]
+    [InlineData((long)42, "long")]
+    [InlineData(3.5, "double")]
+    [InlineData("hi", "string")]
+    public void InfluxPointBuilder_Types_ValueField(object raw, string kind)
+    {
+        InfluxOptions options = new() { Measurement = "opc_tags" };
+        BridgeValue value = new("src", "item.1", raw, DateTime.UtcNow, 192, true);
+        InfluxPointModel point = InfluxPointBuilder.Build(options, value, "Name");
+        Assert.Equal("opc_tags", point.Measurement);
+        Assert.Equal("src", point.Tags["source_id"]);
+        Assert.Equal("item.1", point.Tags["da_item_id"]);
+        Assert.Equal("Name", point.Tags["display_name"]);
+        Assert.Equal(kind, point.ValueFieldKind);
+        Assert.Equal(192, point.Quality);
+        Assert.True(point.IsGood);
+    }
+
+    [Fact]
+    public void InfluxPointBuilder_Omits_EmptyDisplayName()
+    {
+        InfluxOptions options = new();
+        BridgeValue value = new("src", "item.1", 1L, DateTime.UtcNow, 0, false);
+        InfluxPointModel point = InfluxPointBuilder.Build(options, value, "  ");
+        Assert.False(point.Tags.ContainsKey("display_name"));
     }
 }
