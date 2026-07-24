@@ -11,6 +11,7 @@ using OpcBridge.Client;
 using OpcBridge.Core;
 using OpcBridge.Da;
 using OpcBridge.Mqtt;
+using OpcBridge.Influx;
 using OpcBridge.Ua;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
@@ -22,6 +23,7 @@ builder.Services.Configure<BridgeOptions>(builder.Configuration.GetSection("Brid
 builder.Services.Configure<DaClientOptions>(builder.Configuration.GetSection("Da"));
 builder.Services.Configure<UaServerOptions>(builder.Configuration.GetSection("Ua"));
 builder.Services.Configure<MqttBrokerOptions>(builder.Configuration.GetSection("Mqtt"));
+builder.Services.Configure<InfluxOptions>(builder.Configuration.GetSection("Influx"));
 builder.Services.AddSingleton<DashboardLogStore>();
 builder.Logging.Services.AddSingleton<ILoggerProvider, DashboardLogProvider>();
 
@@ -36,6 +38,8 @@ builder.Services.AddSingleton<UaServerHost>();
 builder.Services.AddSingleton<IMqttBridge, MqttBridge>();
 builder.Services.AddSingleton<MqttRuntimeSettings>();
 builder.Services.AddSingleton<MqttValueStore>();
+builder.Services.AddSingleton<IInfluxWriter, InfluxWriter>();
+builder.Services.AddSingleton<InfluxRuntimeSettings>();
 builder.Services.AddSingleton<BridgeWorker>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<BridgeWorker>());
  builder.Services.AddHostedService<OpcBridgeMonitor>();
