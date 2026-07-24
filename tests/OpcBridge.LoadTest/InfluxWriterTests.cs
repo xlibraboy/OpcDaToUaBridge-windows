@@ -89,4 +89,30 @@ public sealed class InfluxWriterTests
         InfluxPointModel point = InfluxPointBuilder.Build(options, value, "  ");
         Assert.False(point.Tags.ContainsKey("display_name"));
     }
+
+    [Fact]
+    public void InfluxRuntimeSettings_Persists_ToDisk()
+    {
+        string path = Path.Combine(AppContext.BaseDirectory, "influx.json");
+        if (File.Exists(path)) File.Delete(path);
+
+        InfluxRuntimeSettings settings = new(Options.Create(new InfluxOptions()));
+        settings.UpsertOptions(new InfluxOptions
+        {
+            Enabled = true,
+            Url = "http://127.0.0.1:8086",
+            Org = "factory",
+            Bucket = "tags",
+            Token = "secret",
+            Measurement = "opc_tags"
+        });
+
+        Assert.True(File.Exists(path));
+        InfluxRuntimeSettings reloaded = new(Options.Create(new InfluxOptions()));
+        InfluxOptions opts = reloaded.GetOptions();
+        Assert.True(opts.Enabled);
+        Assert.Equal("factory", opts.Org);
+        Assert.Equal("tags", opts.Bucket);
+        Assert.Equal("secret", opts.Token);
+    }
 }
